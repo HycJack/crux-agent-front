@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.exe
+hermes-chat-backend
+uploads/
+.env
+*.db
+.hermes-chat/
+*.log
