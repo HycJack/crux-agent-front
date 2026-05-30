@@ -7,3 +7,5 @@ uploads/
 *.db
 .hermes-chat/
 *.log
+backend/backend
+backend/hermes-chat
