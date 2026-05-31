@@ -729,7 +729,6 @@ export default function Chat() {
             </button>
           )}
           <div className="header-center">
-            <h1>{agent.name}</h1>
             {selectedAgents.length > 1 && (
               <span className="subtitle">
                 {t('group_chat')}: {selectedAgents.map(id => allAgents.find(a => a.id === id)?.name || id).join(' + ')}
