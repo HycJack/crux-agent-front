@@ -151,32 +151,37 @@ function ToolCallBlock({ toolCall }) {
     const s = typeof str === 'string' ? str : JSON.stringify(str, null, 2)
     return s.length > len ? s.slice(0, len) + '...' : s
   }
+  // 适配后端格式: {id, type, function: {name, arguments}} 或直接 {name, args}
+  const name = toolCall.function?.name || toolCall.name || 'unknown'
+  const args = toolCall.function?.arguments || toolCall.args
+  const result = toolCall.result
+  const duration = toolCall.duration
   return (
     <div className={`tool-call-block ${expanded ? 'expanded' : ''}`}>
       <div className="tool-call-header" role="button" tabIndex={0} onClick={() => setExpanded(!expanded)}>
         <div className="tool-call-title">
           <Wrench size={14} />
-          <span className="tool-call-name">{toolCall.name}</span>
-          {toolCall.duration && <span className="tool-call-duration"><Clock size={10} /> {toolCall.duration}</span>}
+          <span className="tool-call-name">{name}</span>
+          {duration && <span className="tool-call-duration"><Clock size={10} /> {duration}</span>}
         </div>
         <div className="tool-call-toggle">{expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}</div>
       </div>
       {expanded && (
         <div className="tool-call-body">
-          {toolCall.args && (
+          {args && (
             <div className="tool-call-section">
               <div className="tool-call-section-header" role="button" tabIndex={0} onClick={() => setShowArgs(!showArgs)}>
                 <span>Arguments</span>{showArgs ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </div>
-              {showArgs && <pre className="tool-call-code">{truncate(toolCall.args, 500)}</pre>}
+              {showArgs && <pre className="tool-call-code">{truncate(args, 500)}</pre>}
             </div>
           )}
-          {toolCall.result && (
+          {result && (
             <div className="tool-call-section">
               <div className="tool-call-section-header" role="button" tabIndex={0} onClick={() => setShowResult(!showResult)}>
                 <span>Result</span>{showResult ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </div>
-              {showResult && <pre className="tool-call-code">{truncate(toolCall.result, 500)}</pre>}
+              {showResult && <pre className="tool-call-code">{truncate(result, 500)}</pre>}
             </div>
           )}
         </div>
@@ -341,10 +346,27 @@ export default function Chat() {
           }
           if (!Array.isArray(m.tool_calls)) m.tool_calls = []
         })
+        // 构建 tool_call_id → result 映射
+        const toolResults = {}
+        data.filter(m => m.role === 'tool' && m.tool_call_id).forEach(m => {
+          toolResults[m.tool_call_id] = m.content
+        })
+        // 过滤掉 tool 消息，合并 result 到 tool_call
+        const filtered = data.filter(m => m.role !== 'tool')
+        filtered.forEach(m => {
+          if (m.tool_calls?.length) {
+            m.tool_calls = m.tool_calls.map(tc => ({
+              ...tc,
+              name: tc.function?.name || tc.name || '',
+              args: tc.function?.arguments || tc.args,
+              result: toolResults[tc.id] || tc.result || null,
+            }))
+          }
+        })
         // Merge consecutive assistant messages and separate thinking
         const merged = []
         let lastAssistant = null
-        for (const msg of data) {
+        for (const msg of filtered) {
           if (msg.role === 'assistant') {
             if (lastAssistant) {
               lastAssistant.content += msg.content
