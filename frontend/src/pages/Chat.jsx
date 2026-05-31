@@ -668,13 +668,13 @@ export default function Chat() {
       {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
-          <button className="btn-icon sidebar-collapse-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title={sidebarOpen ? '收起' : '展开'}>
-            {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+          <button className="btn-icon sidebar-collapse-btn" onClick={() => setSidebarOpen(false)} title="收起">
+            <PanelLeftClose size={18} />
           </button>
-          {sidebarOpen && <span className="sidebar-title">Crux</span>}
-          {sidebarOpen && (
-            <button className="btn-icon sidebar-new-chat" onClick={newChat} title={t('new_chat')}><Plus size={18} /></button>
-          )}
+          <span className="sidebar-title">Crux</span>
+          <button className="btn-icon sidebar-new-chat" onClick={newChat} title={t('new_chat')}>
+            <Plus size={18} />
+          </button>
         </div>
 
         {sidebarOpen && (

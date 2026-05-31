@@ -1855,6 +1855,13 @@ body {
   padding: 12px 14px;
   border-bottom: 1px solid var(--border);
 }
+.sidebar-header .sidebar-collapse-btn {
+  width: 32px; height: 32px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: none; color: var(--text); cursor: pointer;
+  flex-shrink: 0;
+}
+.sidebar-header .sidebar-collapse-btn:hover { background: var(--surface2); }
 .sidebar-header .sidebar-title { flex: 1; font-size: 0.95rem; font-weight: 600; }
 .sidebar-header .sidebar-new-chat { margin-left: auto; }
 
