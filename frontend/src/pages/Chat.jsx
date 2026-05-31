@@ -757,6 +757,7 @@ export default function Chat() {
               </div>
               <div className="bubble">
                 {msg.role === 'assistant' && msg.name && <div className="agent-name-tag">{msg.name}</div>}
+                {msg.created_at && <div className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</div>}
                 {msg.skills?.length > 0 && (
                   <div className="skill-badges">
                     {msg.skills.map((skill, j) => <SkillBadge key={j} skill={skill} />)}
