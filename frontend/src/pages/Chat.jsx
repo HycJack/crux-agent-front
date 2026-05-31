@@ -233,7 +233,7 @@ function MessageActions({ msg, onResend }) {
     } catch { /* ignore */ }
   }
   return (
-    <div className="message-actions">
+    <div className="msg-actions">
       <button className="msg-action-btn" onClick={handleCopy} title="复制">
         {copied ? '✓' : <Copy size={13} />}
       </button>
@@ -396,9 +396,23 @@ export default function Chat() {
 
   // New chat
   const newChat = async () => {
-    if (!agent) return
+    let a = agent
+    if (!a) {
+      // Try loading agents first
+      try {
+        const resp = await API.get('/api/agents')
+        const data = resp.agents || resp
+        if (data.length > 0) {
+          a = data[0]
+          setAgent(a)
+          setSelectedAgents([a.id])
+          setAllAgents(data)
+        }
+      } catch { /* ignore */ }
+    }
+    if (!a) return
     try {
-      const resp = await API.post('/api/sessions', { agent_id: agent.id, title: t('new_chat') })
+      const resp = await API.post('/api/sessions', { agent_id: a.id, title: t('new_chat') })
       const sess = resp.session || resp
       setSessions(prev => [sess, ...prev])
       setCurrentSession(sess)
@@ -758,7 +772,6 @@ export default function Chat() {
               </div>
               <div className="bubble">
                 {msg.role === 'assistant' && msg.name && <div className="agent-name-tag">{msg.name}</div>}
-                {msg.created_at && <div className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</div>}
                 {msg.skills?.length > 0 && (
                   <div className="skill-badges">
                     {msg.skills.map((skill, j) => <SkillBadge key={j} skill={skill} />)}
@@ -779,6 +792,7 @@ export default function Chat() {
                     <MarkdownContent content={msg.content} streaming={streaming && i === messages.length - 1} onMermaidZoom={setMermaidCode} />
                   </div>
                 )}
+                {msg.created_at && <div className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</div>}
                 <MessageActions msg={msg} onResend={resendMessage} />
               </div>
             </div>

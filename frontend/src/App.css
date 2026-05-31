@@ -501,8 +501,9 @@ body {
 .msg-timestamp {
   font-size: 0.68rem;
   color: var(--text-dim);
-  margin-bottom: 6px;
-  opacity: 0.6;
+  margin-top: 6px;
+  text-align: right;
+  opacity: 0.5;
 }
 
 .msg-images { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
