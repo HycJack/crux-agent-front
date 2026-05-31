@@ -533,7 +533,7 @@ export default function Chat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({
-          session_id: session.id,
+          session: session.id,
           messages: apiMessages,
           agent_ids: selectedAgents,
         }),
@@ -588,6 +588,16 @@ export default function Chat() {
               })
             } else if (evt === 'title_update') {
               setSessions(prev => prev.map(s => s.id === session.id ? { ...s, title: evtData } : s))
+            } else if (evt === 'session') {
+              // Backend confirms/returns the actual session ID
+              if (evtData && evtData !== session.id) {
+                session = { ...session, id: evtData }
+                setCurrentSession(session)
+                setSessions(prev => {
+                  if (prev.some(s => s.id === evtData)) return prev
+                  return [session, ...prev]
+                })
+              }
             } else if (evt === 'compact') {
               setCompacting(true)
             } else if (evt === 'compact_done') {
@@ -657,6 +667,12 @@ export default function Chat() {
       {isDragActive && <div className="drag-overlay"><p>{t('drop_image')}</p></div>}
 
       {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
+      {/* Mobile floating expand button */}
+      {!sidebarOpen && (
+        <button className="sidebar-mobile-expand" onClick={() => setSidebarOpen(true)} title="展开">
+          <PanelLeftOpen size={18} />
+        </button>
+      )}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
           <button className="btn-icon sidebar-collapse-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title={sidebarOpen ? '收起' : '展开'}>
