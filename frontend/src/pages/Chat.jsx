@@ -286,18 +286,20 @@ export default function Chat() {
   const textareaRef = useRef(null)
 
   // Load agents and teams
+  const initialLoadDone = useRef(false)
   const loadAgents = useCallback(async () => {
     try {
       const resp = await API.get('/api/agents')
       const data = resp.agents || resp
       setAllAgents(data)
-      if (!agent && data.length > 0) {
+      if (!initialLoadDone.current && data.length > 0) {
+        initialLoadDone.current = true
         const first = data[0]
         setAgent(first)
         setSelectedAgents([first.id])
       }
     } catch { /* ignore */ }
-  }, [agent])
+  }, [])
 
   const loadTeams = useCallback(async () => {
     try {
@@ -312,11 +314,11 @@ export default function Chat() {
   // Reload agents when modal closes (in case user created/edited)
   useEffect(() => {
     if (!agentModal) loadAgents()
-  }, [agentModal, loadAgents])
+  }, [agentModal])
 
   useEffect(() => {
     if (!teamModal) loadTeams()
-  }, [teamModal, loadTeams])
+  }, [teamModal])
 
   // Load sessions
   const loadSessions = useCallback(async () => {
@@ -325,13 +327,10 @@ export default function Chat() {
       const resp = await API.get(`/api/sessions?agent_id=${agent.id}`)
       const data = resp.sessions || resp
       setSessions(data)
-      if (data.length > 0 && !currentSession) {
-        setCurrentSession(data[0])
-      }
     } catch { /* ignore */ }
-  }, [agent, currentSession])
+  }, [agent])
 
-  useEffect(() => { loadSessions() }, [agent])
+  useEffect(() => { loadSessions() }, [loadSessions])
 
   // Load messages when session changes
   useEffect(() => {
