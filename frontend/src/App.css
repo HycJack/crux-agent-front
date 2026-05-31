@@ -1781,12 +1781,7 @@ body {
 }
 .sidebar.collapsed .sidebar-agents { display: none; }
 .sidebar.collapsed .session-list { display: none; }
-.sidebar.collapsed .sidebar-footer {
-  justify-content: center;
-  padding: 10px 8px;
-}
-.sidebar.collapsed .sidebar-footer .sidebar-config-btn span { display: none; }
-.sidebar.collapsed .sidebar-footer .sidebar-config-btn { padding: 8px; }
+.sidebar.collapsed .sidebar-footer { display: none; }
 
 /* ─── Sidebar header layout ─── */
 .sidebar-header {
