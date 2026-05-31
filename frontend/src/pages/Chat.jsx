@@ -329,6 +329,10 @@ export default function Chat() {
       const resp = await API.get(`/api/sessions?agent_id=${agent.id}`)
       const data = resp.sessions || resp
       setSessions(data)
+      setCurrentSession(prev => {
+        if (prev) return prev
+        return data.length > 0 ? data[0] : null
+      })
     } catch { /* ignore */ }
   }, [agent])
 
