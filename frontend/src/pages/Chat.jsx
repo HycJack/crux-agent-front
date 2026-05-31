@@ -666,12 +666,6 @@ export default function Chat() {
       {isDragActive && <div className="drag-overlay"><p>{t('drop_image')}</p></div>}
 
       {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
-      {/* Mobile floating expand button */}
-      {!sidebarOpen && (
-        <button className="sidebar-mobile-expand" onClick={() => setSidebarOpen(true)} title="展开">
-          <PanelLeftOpen size={18} />
-        </button>
-      )}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
           <button className="btn-icon sidebar-collapse-btn" onClick={() => setSidebarOpen(!sidebarOpen)} title={sidebarOpen ? '收起' : '展开'}>
@@ -729,6 +723,11 @@ export default function Chat() {
 
       <div className="chat-main">
         <header className="chat-header">
+          {!sidebarOpen && (
+            <button className="btn-icon header-expand-btn" onClick={() => setSidebarOpen(true)} title="展开">
+              <PanelLeftOpen size={18} />
+            </button>
+          )}
           <div className="header-center">
             <h1>{agent.name}</h1>
             {selectedAgents.length > 1 && (

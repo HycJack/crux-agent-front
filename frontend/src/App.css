@@ -393,6 +393,7 @@ body {
   background: var(--surface);
   flex-shrink: 0;
   gap: 8px;
+  position: relative;
 }
 
 .chat-header .header-center {
@@ -958,28 +959,13 @@ body {
   .sidebar.collapsed .session-list,
   .sidebar.collapsed .sidebar-footer { display: none; }
   .sidebar-backdrop { display: block; }
-  .sidebar-mobile-expand {
-    display: flex;
-    position: fixed;
-    top: 8px;
-    left: 8px;
-    z-index: 51;
-    width: 36px;
-    height: 36px;
-    border: none;
-    border-radius: 8px;
-    background: var(--surface);
-    color: var(--text);
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-  }
+  .header-expand-btn { display: flex; }
+  .chat-header { padding-left: 8px; }
   .agent-grid { grid-template-columns: 1fr; }
   .form-row { grid-template-columns: 1fr; }
   .tool-name { min-width: auto; }
 }
-.sidebar-mobile-expand { display: none; }
+.header-expand-btn { display: none; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); }
 .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 49; }
 
 /* ─── Login page ─── */
