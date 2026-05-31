@@ -21,6 +21,7 @@ import { API, sseConnect } from '../api'
 import { useAuth } from '../AuthContext'
 import AgentModal from '../components/AgentModal'
 import TeamModal from '../components/TeamModal'
+import SettingsPage from './Settings'
 import i18n from '../i18n'
 
 const API_BASE = import.meta.env.VITE_API_BASE || ''
@@ -276,6 +277,7 @@ export default function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth > 768)
   const [agentModal, setAgentModal] = useState(false)
   const [teamModal, setTeamModal] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [mermaidCode, setMermaidCode] = useState(null)
   const [imageFile, setImageFile] = useState(null)
   const [imagePreview, setImagePreview] = useState(null)
@@ -526,7 +528,7 @@ export default function Chat() {
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('crux-token')}` },
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` },
         body: JSON.stringify({
           session_id: session.id,
           messages: apiMessages,
@@ -698,7 +700,7 @@ export default function Chat() {
         </div>
 
         <div className="sidebar-footer">
-          <button className="sidebar-config-btn" onClick={() => navigate('/settings')}>
+          <button className="sidebar-config-btn" onClick={() => setSettingsOpen(true)}>
             <Settings size={16} />
             {sidebarOpen && <span>{t('settings')}</span>}
           </button>
@@ -857,6 +859,18 @@ export default function Chat() {
         />
       )}
       {mermaidCode && <MermaidModal code={mermaidCode} onClose={() => setMermaidCode(null)} />}
+      {settingsOpen && (
+        <div className="settings-overlay">
+          <div className="settings-overlay-header">
+            <button className="btn-icon" onClick={() => setSettingsOpen(false)}>
+              <X size={20} />
+            </button>
+          </div>
+          <div className="settings-overlay-body">
+            <SettingsPage />
+          </div>
+        </div>
+      )}
     </div>
   )
 }

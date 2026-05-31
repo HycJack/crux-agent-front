@@ -1176,6 +1176,7 @@ func main() {
 
 		// Sessions
 		auth.GET("/sessions", engine.ListSessions)
+		auth.POST("/sessions", engine.CreateSession)
 		auth.GET("/sessions/:id/messages", engine.GetSessionMessages)
 		auth.PUT("/sessions/:id", engine.UpdateSession)
 		auth.DELETE("/sessions/:id", engine.DeleteSession)
@@ -1194,6 +1195,9 @@ func main() {
 		auth.DELETE("/teams/:id", engine.DeleteTeam)
 
 		auth.GET("/tools", engine.ListTools)
+
+		// Models
+		auth.GET("/models/available", engine.ListAvailableModels)
 
 		// User config - Model Providers
 		auth.GET("/user/providers", engine.ListProviders)
@@ -1380,6 +1384,33 @@ func (e *ChatEngine) ListMyInviteCodes(c *gin.Context) {
 func (e *ChatEngine) ListSessions(c *gin.Context) {
 	userID := c.GetString("userID")
 	c.JSON(200, gin.H{"sessions": e.sessionStore.ListByUser(userID)})
+}
+
+func (e *ChatEngine) CreateSession(c *gin.Context) {
+	userID := c.GetString("userID")
+	var body struct {
+		AgentID string `json:"agent_id"`
+		Title   string `json:"title"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if body.Title == "" {
+		body.Title = "新对话"
+	}
+	agentIDs := []string{body.AgentID}
+	if body.AgentID == "" {
+		agentIDs = []string{}
+	}
+	sess := &SessionMeta{
+		ID:       fmt.Sprintf("sess-%d", time.Now().UnixNano()),
+		UserID:   userID,
+		Title:    body.Title,
+		AgentIDs: agentIDs,
+	}
+	e.sessionStore.Create(sess)
+	c.JSON(200, gin.H{"session": sess})
 }
 
 func (e *ChatEngine) GetSessionMessages(c *gin.Context) {
