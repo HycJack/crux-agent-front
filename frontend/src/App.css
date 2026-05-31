@@ -965,7 +965,10 @@ body {
   .form-row { grid-template-columns: 1fr; }
   .tool-name { min-width: auto; }
 }
-.header-expand-btn { display: none; position: absolute; left: 8px; top: 50%; transform: translateY(-50%); }
+@media (min-width: 769px) {
+  .header-expand-btn { display: none; }
+}
+.header-expand-btn { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); }
 .sidebar-backdrop { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 49; }
 
 /* ─── Login page ─── */
