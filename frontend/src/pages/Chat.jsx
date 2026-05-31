@@ -368,14 +368,18 @@ export default function Chat() {
             }))
           }
         })
-        // Merge consecutive assistant messages (but not across tool_calls boundaries)
+        // Merge consecutive assistant messages into one bubble
         const merged = []
         let lastAssistant = null
         for (const msg of filtered) {
           if (msg.role === 'assistant') {
-            if (lastAssistant && !lastAssistant.tool_calls?.length && !msg.tool_calls?.length) {
-              // Only merge if neither has tool_calls
-              lastAssistant.content += msg.content
+            if (lastAssistant) {
+              // Merge content
+              if (msg.content) lastAssistant.content += msg.content
+              // Merge tool_calls
+              if (msg.tool_calls?.length) {
+                lastAssistant.tool_calls = [...(lastAssistant.tool_calls || []), ...msg.tool_calls]
+              }
             } else {
               lastAssistant = { ...msg }
               merged.push(lastAssistant)
