@@ -707,9 +707,6 @@ export default function Chat() {
 
       <div className="chat-main">
         <header className="chat-header">
-          <button className="btn-icon sidebar-toggle" onClick={() => setSidebarOpen(!sidebarOpen)}>
-            {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
-          </button>
           <div className="header-center">
             <h1>{agent.name}</h1>
             {selectedAgents.length > 1 && (

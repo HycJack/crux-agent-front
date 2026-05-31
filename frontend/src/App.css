@@ -1782,7 +1782,6 @@ body {
   justify-content: center;
   padding: 12px 8px;
 }
-.sidebar.collapsed .sidebar-collapse-btn { display: none; }
 .sidebar.collapsed .sidebar-agents { display: none; }
 .sidebar.collapsed .session-list { display: none; }
 .sidebar.collapsed .sidebar-footer {
