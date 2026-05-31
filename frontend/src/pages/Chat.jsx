@@ -369,16 +369,14 @@ export default function Chat() {
             }))
           }
         })
-        // Merge consecutive assistant messages and separate thinking
+        // Merge consecutive assistant messages (but not across tool_calls boundaries)
         const merged = []
         let lastAssistant = null
         for (const msg of filtered) {
           if (msg.role === 'assistant') {
-            if (lastAssistant) {
+            if (lastAssistant && !lastAssistant.tool_calls?.length && !msg.tool_calls?.length) {
+              // Only merge if neither has tool_calls
               lastAssistant.content += msg.content
-              if (msg.tool_calls?.length) {
-                lastAssistant.tool_calls = [...(lastAssistant.tool_calls || []), ...msg.tool_calls]
-              }
             } else {
               lastAssistant = { ...msg }
               merged.push(lastAssistant)
@@ -463,6 +461,7 @@ export default function Chat() {
     accept: { 'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.webp'] },
     onDrop: (files) => {
       if (files[0]) {
+        if (imagePreview) URL.revokeObjectURL(imagePreview)
         setImageFile(files[0])
         setImagePreview(URL.createObjectURL(files[0]))
       }
@@ -479,8 +478,8 @@ export default function Chat() {
   }, [input])
 
   // Send message
-  const sendMessage = async () => {
-    const text = input.trim()
+  const sendMessage = async (textOverride) => {
+    const text = (textOverride ?? input).trim()
     if ((!text && !imageFile) || loading || streaming || !agent) return
 
     setInput('')
@@ -623,13 +622,11 @@ export default function Chat() {
   }
 
   // Resend message
-  const resendMessage = async (msg) => {
+  const resendMessage = (msg) => {
     const idx = messages.findIndex(m => m._id === msg._id)
     if (idx === -1) return
-    const msgsBefore = messages.slice(0, idx)
-    setMessages(msgsBefore)
-    setInput(msg.content)
-    setTimeout(() => sendMessage(), 100)
+    setMessages(messages.slice(0, idx))
+    sendMessage(msg.content)
   }
 
   // Stop streaming
@@ -638,6 +635,10 @@ export default function Chat() {
     streamingRef.current = false
     setStreaming(false)
     setLoading(false)
+    // Notify backend to stop processing
+    if (currentSession?.id) {
+      API.cancelChat(currentSession.id).catch(() => {})
+    }
   }
 
   // Enter to send
@@ -817,7 +818,7 @@ export default function Chat() {
           {imagePreview && (
             <div className="image-preview">
               <img src={imagePreview} alt="preview" />
-              <button className="image-remove" onClick={() => { setImageFile(null); setImagePreview(null) }}>
+              <button className="image-remove" onClick={() => { if (imagePreview) URL.revokeObjectURL(imagePreview); setImageFile(null); setImagePreview(null) }}>
                 <X size={14} />
               </button>
             </div>
