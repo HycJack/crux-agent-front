@@ -1137,6 +1137,7 @@ func optionalAuth(userStore *UserStore) gin.HandlerFunc {
 func main() {
 	home, _ := os.UserHomeDir()
 	dataDir := filepath.Join(home, ".crux-chat")
+	workDir, _ := os.Getwd()
 
 	engine, err := NewChatEngine()
 	if err != nil {
@@ -1164,6 +1165,36 @@ func main() {
 	// Upload static files
 	os.MkdirAll(uploadDir, 0o755)
 	r.Static("/uploads", uploadDir)
+
+	// Serve frontend SPA (production mode)
+	// Try multiple possible paths for frontend dist
+	possiblePaths := []string{
+		filepath.Join(home, "hermes-chat", "frontend", "dist"),
+		filepath.Join(filepath.Dir(home), "hermes-chat", "frontend", "dist"),
+		filepath.Join(workDir, "frontend", "dist"),
+		filepath.Join(workDir, "..", "frontend", "dist"),
+	}
+	var frontendDist string
+	for _, p := range possiblePaths {
+		if _, err := os.Stat(filepath.Join(p, "index.html")); err == nil {
+			frontendDist = p
+			break
+		}
+	}
+	if frontendDist != "" {
+		r.Static("/assets", filepath.Join(frontendDist, "assets"))
+		r.NoRoute(func(c *gin.Context) {
+			// Don't serve SPA for API routes
+			if strings.HasPrefix(c.Request.URL.Path, "/api") {
+				c.JSON(404, gin.H{"error": "not found"})
+				return
+			}
+			c.File(filepath.Join(frontendDist, "index.html"))
+		})
+		log.Printf("Serving frontend SPA from %s", frontendDist)
+	} else {
+		log.Printf("Frontend SPA not found, invite links will not work. Build frontend first.")
+	}
 
 	// ── Public routes ──
 	api.POST("/auth/register", engine.Register)

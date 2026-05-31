@@ -486,7 +486,7 @@ export default function Chat() {
     if ((!text && !imageFile) || loading || streaming || !agent) return
 
     setInput('')
-    const userMsg = { role: 'user', content: text, _id: Date.now().toString() }
+    const userMsg = { role: 'user', content: text, _id: Date.now().toString(), created_at: new Date().toISOString() }
 
     // Handle image upload
     if (imageFile) {
@@ -528,7 +528,7 @@ export default function Chat() {
     const controller = new AbortController()
     abortRef.current = () => controller.abort()
 
-    let assistantMsg = { role: 'assistant', content: '', tool_calls: [], _id: 'stream-' + Date.now() }
+    let assistantMsg = { role: 'assistant', content: '', tool_calls: [], _id: 'stream-' + Date.now(), created_at: new Date().toISOString() }
     setMessages(prev => [...prev, assistantMsg])
 
     try {
