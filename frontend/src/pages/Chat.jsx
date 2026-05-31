@@ -17,7 +17,7 @@ import {
   Users, BotMessageSquare,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
-import { API, sseConnect } from '../api'
+import { API } from '../api'
 import { useAuth } from '../AuthContext'
 import AgentModal from '../components/AgentModal'
 import TeamModal from '../components/TeamModal'
@@ -324,9 +324,8 @@ export default function Chat() {
 
   // Load sessions
   const loadSessions = useCallback(async () => {
-    if (!agent) return
     try {
-      const resp = await API.get(`/api/sessions?agent_id=${agent.id}`)
+      const resp = await API.get('/api/sessions')
       const data = resp.sessions || resp
       setSessions(data)
       setCurrentSession(prev => {
@@ -334,7 +333,7 @@ export default function Chat() {
         return data.length > 0 ? data[0] : null
       })
     } catch { /* ignore */ }
-  }, [agent])
+  }, [])
 
   useEffect(() => { loadSessions() }, [loadSessions])
 

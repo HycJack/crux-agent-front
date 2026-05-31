@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,11 +39,27 @@ var (
 )
 
 func init() {
-	if string(jwtSecret) == "crux-chat-secret-key-change-me" || len(jwtSecret) == 0 {
-		b := make([]byte, 32)
-		rand.Read(b)
-		jwtSecret = []byte(hex.EncodeToString(b))
-		log.Printf("WARNING: JWT_SECRET not set, generated random secret (will change on restart)")
+	// Load .env file from data directory if it exists
+	home, _ := os.UserHomeDir()
+	envPath := filepath.Join(home, ".crux-chat", ".env")
+	if data, err := os.ReadFile(envPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if idx := strings.Index(line, "="); idx > 0 {
+				key := strings.TrimSpace(line[:idx])
+				val := strings.TrimSpace(line[idx+1:])
+				if os.Getenv(key) == "" {
+					os.Setenv(key, val)
+				}
+			}
+		}
+	}
+	jwtSecret = []byte(envOr("JWT_SECRET", ""))
+	if len(jwtSecret) == 0 {
+		log.Fatalf("FATAL: JWT_SECRET environment variable is required. Generate one with: openssl rand -hex 32")
 	}
 }
 
@@ -1129,14 +1144,20 @@ func main() {
 	}
 
 	r := gin.Default()
-	r.Use(cors.New(cors.Config{
-		AllowAllOrigins:  true,
+	corsOrigins := envOr("CORS_ORIGINS", "")
+	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}))
+	}
+	if corsOrigins == "" || corsOrigins == "*" {
+		corsConfig.AllowAllOrigins = true
+	} else {
+		corsConfig.AllowOrigins = strings.Split(corsOrigins, ",")
+	}
+	r.Use(cors.New(corsConfig))
 
 	api := r.Group("/api")
 
@@ -1260,6 +1281,14 @@ func main() {
 // Auth handlers
 
 func (e *ChatEngine) Register(c *gin.Context) {
+	// Reject if already authenticated
+	auth := c.GetHeader("Authorization")
+	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
+		if _, err := parseToken(strings.TrimPrefix(auth, "Bearer ")); err == nil {
+			c.JSON(400, gin.H{"error": "already logged in"})
+			return
+		}
+	}
 	var req struct {
 		Username   string `json:"username" binding:"required"`
 		Password   string `json:"password" binding:"required"`
@@ -1310,10 +1339,19 @@ func (e *ChatEngine) Register(c *gin.Context) {
 		return
 	}
 
+	user.Password = ""
 	c.JSON(200, gin.H{"user": user, "token": token})
 }
 
 func (e *ChatEngine) Login(c *gin.Context) {
+	// Reject if already authenticated
+	auth := c.GetHeader("Authorization")
+	if auth != "" && strings.HasPrefix(auth, "Bearer ") {
+		if _, err := parseToken(strings.TrimPrefix(auth, "Bearer ")); err == nil {
+			c.JSON(400, gin.H{"error": "already logged in"})
+			return
+		}
+	}
 	var req struct {
 		Username string `json:"username" binding:"required"`
 		Password string `json:"password" binding:"required"`
@@ -1335,11 +1373,13 @@ func (e *ChatEngine) Login(c *gin.Context) {
 		return
 	}
 
+	user.Password = ""
 	c.JSON(200, gin.H{"user": user, "token": token})
 }
 
 func (e *ChatEngine) GetMe(c *gin.Context) {
 	user := c.MustGet("user").(*User)
+	user.Password = ""
 	c.JSON(200, gin.H{"user": user})
 }
 
@@ -1666,7 +1706,7 @@ func (e *ChatEngine) HandleChat(c *gin.Context) {
 		}
 		if firstMsg != "" {
 			titleWg.Add(1)
-			go e.generateAITitle(sessionID, firstMsg, c, flusher, &titleWg)
+			go e.generateAITitle(sessionID, firstMsg, agents[0].Model, userID, c, flusher, &titleWg)
 		}
 	}
 
@@ -1809,13 +1849,16 @@ You have persistent memory across sessions. Use these tools to remember importan
 			if sk.Prompt != "" {
 				systemContent += "\n\n" + sk.Prompt
 			}
-			// Set env vars from skills (scoped to this request via process env)
-			envMu.Lock()
-			for k, v := range sk.EnvVars {
-				os.Setenv(k, v)
-				skillEnvKeys = append(skillEnvKeys, k)
-			}
-			envMu.Unlock()
+		// Set env vars from skills (scoped to this request via process env)
+		// WARNING: os.Setenv is process-global. Concurrent chat requests with
+		// different skills will clobber each other's env vars. This is a known
+		// limitation — a proper fix requires per-request env isolation in tool execution.
+		envMu.Lock()
+		for k, v := range sk.EnvVars {
+			os.Setenv(k, v)
+			skillEnvKeys = append(skillEnvKeys, k)
+		}
+		envMu.Unlock()
 		}
 	}
 	// Unset skill env vars after the loop
@@ -1850,22 +1893,27 @@ You have persistent memory across sessions. Use these tools to remember importan
 		oldMessages := allMessages[1 : len(allMessages)-keepCount]
 		recentMessages := allMessages[len(allMessages)-keepCount:]
 		// Summarize old messages into a brief context
-		summary := "Previous conversation summary: "
-		msgCount := 0
+		summary := "Previous conversation summary:\n"
 		for _, m := range oldMessages {
-			if m.Role == "user" {
-				summary += "User asked about: " + truncateStr(m.Content, 100) + ". "
-				msgCount++
-			} else if m.Role == "assistant" && len(m.ToolCalls) == 0 {
-				summary += "Assistant replied: " + truncateStr(m.Content, 100) + ". "
-				msgCount++
-			}
-			if msgCount >= 10 {
-				break
+			switch m.Role {
+			case "user":
+				summary += "- User: " + truncateStr(m.Content, 150) + "\n"
+			case "assistant":
+				if len(m.ToolCalls) > 0 {
+					// Summarize tool calls instead of losing them
+					for _, tc := range m.ToolCalls {
+						summary += fmt.Sprintf("- Assistant called tool: %s\n", tc.Function.Name)
+					}
+				}
+				if m.Content != "" {
+					summary += "- Assistant: " + truncateStr(m.Content, 150) + "\n"
+				}
+			case "tool":
+				summary += "- Tool result: " + truncateStr(m.Content, 100) + "\n"
 			}
 		}
 		// Rebuild messages: system + summary + recent
-		allMessages = append([]types.Message{systemMsg, {Role: "user", Content: "[Context compressed] " + summary}}, recentMessages...)
+		allMessages = append([]types.Message{systemMsg, {Role: "system", Content: "[Context compressed]\n" + summary}}, recentMessages...)
 		sseSend(c, flusher, "compact_done", fmt.Sprintf("compressed %d messages", len(oldMessages)), false)
 	}
 
@@ -2281,12 +2329,13 @@ func generateTitle(msgs []ChatMessage) string {
 	return "New Chat"
 }
 
-func (e *ChatEngine) generateAITitle(sessionID string, firstMsg string, c *gin.Context, flusher http.Flusher, wg *sync.WaitGroup) {
+func (e *ChatEngine) generateAITitle(sessionID string, firstMsg string, model string, userID string, c *gin.Context, flusher http.Flusher, wg *sync.WaitGroup) {
 	defer wg.Done()
 	messages := []types.Message{
 		{Role: "user", Content: fmt.Sprintf("Generate a very short title (max 20 chars) for a conversation that starts with: %s. Reply with ONLY the title, no quotes.", firstMsg)},
 	}
-	resp, err := e.defaultProvider.Complete(messages, nil)
+	provider := e.getProvider(model, userID)
+	resp, err := provider.Complete(messages, nil)
 	if err != nil {
 		return
 	}
