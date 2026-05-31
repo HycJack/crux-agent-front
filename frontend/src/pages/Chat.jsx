@@ -858,7 +858,7 @@ export default function Chat() {
                 <Square size={20} />
               </button>
             ) : (
-              <button className="btn-icon send-btn" onClick={sendMessage} disabled={!input.trim() && !imageFile} title={t('send')}>
+              <button className="btn-icon send-btn" onClick={() => sendMessage()} disabled={(!input.trim() && !imageFile) || !agent} title={t('send')}>
                 <Send size={20} />
               </button>
             )}

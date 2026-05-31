@@ -885,6 +885,13 @@ body {
 }
 .send-btn:hover { background: var(--accent2); }
 .send-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.stop-btn {
+  background: var(--error);
+  color: white;
+  border-radius: 8px;
+  padding: 6px;
+}
+.stop-btn:hover { background: #c0392b; }
 .send-btn.cancel { background: var(--error); }
 .send-btn.cancel:hover { background: #c0392b; }
 
