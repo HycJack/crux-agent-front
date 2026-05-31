@@ -794,6 +794,11 @@ export default function Chat() {
                     <MarkdownContent content={msg.content} streaming={streaming && i === messages.length - 1} onMermaidZoom={setMermaidCode} />
                   </div>
                 )}
+                {msg.role === 'assistant' && !msg.content && streaming && i === messages.length - 1 && (
+                  <div className="typing-indicator">
+                    <span></span><span></span><span></span>
+                  </div>
+                )}
                 <div className="bubble-footer">
                   {msg.created_at && <span className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</span>}
                   <MessageActions msg={msg} onResend={resendMessage} />
