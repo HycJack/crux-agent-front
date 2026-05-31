@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,7 +15,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -22,7 +22,7 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
-	"golang.org/x/crypto/bcrypt"
+
 
 	"github.com/hermes-go/core/llm"
 	"github.com/hermes-go/core/primitives"
@@ -35,12 +35,12 @@ import (
 var (
 	listenAddr = envOr("LISTEN_ADDR", ":8080")
 	uploadDir  = envOr("UPLOAD_DIR", "./uploads")
-	jwtSecret  = []byte(envOr("JWT_SECRET", "hermes-chat-secret-key-change-me"))
+	jwtSecret  = []byte(envOr("JWT_SECRET", "crux-chat-secret-key-change-me"))
 	envMu      sync.Mutex // protects os.Setenv/Unsetenv from concurrent requests
 )
 
 func init() {
-	if string(jwtSecret) == "hermes-chat-secret-key-change-me" || len(jwtSecret) == 0 {
+	if string(jwtSecret) == "crux-chat-secret-key-change-me" || len(jwtSecret) == 0 {
 		b := make([]byte, 32)
 		rand.Read(b)
 		jwtSecret = []byte(hex.EncodeToString(b))
@@ -68,130 +68,9 @@ type User struct {
 	CreatedAt string `json:"created_at"`
 }
 
-type UserStore struct {
-	path    string
-	mu      sync.RWMutex
-	users   map[string]*User // id -> user
-	byName  map[string]*User // username -> user
-}
 
-func NewUserStore(path string) *UserStore {
-	s := &UserStore{
-		path:   path,
-		users:  make(map[string]*User),
-		byName: make(map[string]*User),
-	}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	s.load()
-	return s
-}
 
-func (s *UserStore) load() {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var users []*User
-	if err := json.Unmarshal(data, &users); err != nil {
-		log.Printf("UserStore load error: %v", err)
-		return
-	}
-	for _, u := range users {
-		s.users[u.ID] = u
-		s.byName[u.Username] = u
-	}
-}
 
-func (s *UserStore) save() {
-	list := make([]*User, 0, len(s.users))
-	for _, u := range s.users {
-		list = append(list, u)
-	}
-	data, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		log.Printf("UserStore save error: %v", err)
-	}
-}
-
-func (s *UserStore) Create(username, password, nickname string) (*User, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, exists := s.byName[username]; exists {
-		return nil, errors.New("username already exists")
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-	role := "user"
-	if len(s.users) == 0 {
-		role = "admin"
-	}
-	user := &User{
-		ID:        fmt.Sprintf("user-%d", time.Now().UnixNano()),
-		Username:  username,
-		Password:  string(hash),
-		Nickname:  nickname,
-		Role:      role,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	s.users[user.ID] = user
-	s.byName[username] = user
-	s.save()
-	return user, nil
-}
-
-func (s *UserStore) Authenticate(username, password string) (*User, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	user, ok := s.byName[username]
-	if !ok {
-		return nil, errors.New("invalid credentials")
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)); err != nil {
-		return nil, errors.New("invalid credentials")
-	}
-	return user, nil
-}
-
-func (s *UserStore) GetByID(id string) *User {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.users[id]
-}
-
-func (s *UserStore) GetByUsername(username string) *User {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.byName[username]
-}
-
-func (s *UserStore) List() []*User {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*User, 0, len(s.users))
-	for _, u := range s.users {
-		result = append(result, u)
-	}
-	return result
-}
-
-func (s *UserStore) Update(id, nickname, avatar string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	user, ok := s.users[id]
-	if !ok {
-		return errors.New("user not found")
-	}
-	if nickname != "" {
-		user.Nickname = nickname
-	}
-	if avatar != "" {
-		user.Avatar = avatar
-	}
-	s.save()
-	return nil
-}
 
 // ════════════════════════════════════════════════
 // JWT
@@ -388,112 +267,6 @@ type SessionMeta struct {
 	UpdatedAt string   `json:"updated_at"`
 }
 
-type SessionStore struct {
-	path     string
-	mu       sync.RWMutex
-	sessions map[string]*SessionMeta
-}
-
-func NewSessionStore(path string) *SessionStore {
-	s := &SessionStore{path: path, sessions: make(map[string]*SessionMeta)}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	s.load()
-	return s
-}
-
-func (s *SessionStore) load() {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var sessions []*SessionMeta
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		log.Printf("SessionStore load error: %v", err)
-		return
-	}
-	for _, sess := range sessions {
-		s.sessions[sess.ID] = sess
-	}
-}
-
-func (s *SessionStore) save() {
-	list := make([]*SessionMeta, 0, len(s.sessions))
-	for _, sess := range s.sessions {
-		list = append(list, sess)
-	}
-	sort.Slice(list, func(i, j int) bool { return list[i].UpdatedAt > list[j].UpdatedAt })
-	data, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		log.Printf("SessionStore save error: %v", err)
-	}
-}
-
-func (s *SessionStore) ListByUser(userID string) []*SessionMeta {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*SessionMeta, 0)
-	for _, sess := range s.sessions {
-		if sess.UserID == userID {
-			result = append(result, sess)
-		}
-	}
-	sort.Slice(result, func(i, j int) bool { return result[i].UpdatedAt > result[j].UpdatedAt })
-	return result
-}
-
-func (s *SessionStore) Get(id string) *SessionMeta {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.sessions[id]
-}
-
-func (s *SessionStore) Create(meta *SessionMeta) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if meta.Title == "" {
-		meta.Title = "New Chat"
-	}
-	now := time.Now().Format(time.RFC3339)
-	meta.CreatedAt = now
-	meta.UpdatedAt = now
-	s.sessions[meta.ID] = meta
-	s.save()
-}
-
-func (s *SessionStore) Touch(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sess, ok := s.sessions[id]; ok {
-		sess.UpdatedAt = time.Now().Format(time.RFC3339)
-		s.save()
-	}
-}
-
-func (s *SessionStore) UpdateTitle(id, title string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sess, ok := s.sessions[id]; ok {
-		sess.Title = title
-		sess.UpdatedAt = time.Now().Format(time.RFC3339)
-		s.save()
-	}
-}
-
-func (s *SessionStore) Delete(id, userID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.sessions[id]
-	if !ok {
-		return errors.New("not found")
-	}
-	if sess.UserID != userID {
-		return errors.New("forbidden")
-	}
-	delete(s.sessions, id)
-	s.save()
-	return nil
-}
-
 // ════════════════════════════════════════════════
 // Tool registry
 
@@ -634,6 +407,11 @@ type UserSkill struct {
 	EnvVars     map[string]string `json:"env_vars,omitempty"`
 	Trigger     string            `json:"trigger,omitempty"`
 	Builtin     bool              `json:"builtin"`
+	CreatedBy   string            `json:"created_by,omitempty"` // "user" or "agent"
+	UseCount    int               `json:"use_count"`
+	LastUsedAt  string            `json:"last_used_at,omitempty"`
+	Pinned      bool              `json:"pinned"`
+	Archived    bool              `json:"archived"`
 	CreatedAt   string            `json:"created_at"`
 	UpdatedAt   string            `json:"updated_at"`
 }
@@ -756,6 +534,108 @@ func (s *SkillStore) Delete(id, userID string) error {
 	return nil
 }
 
+// Curator methods
+
+func (s *SkillStore) RecordUsage(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sk, ok := s.skills[id]
+	if !ok {
+		return
+	}
+	sk.UseCount++
+	sk.LastUsedAt = time.Now().Format(time.RFC3339)
+	sk.UpdatedAt = sk.LastUsedAt
+	s.save()
+}
+
+func (s *SkillStore) Pin(id string, pinned bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sk, ok := s.skills[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	sk.Pinned = pinned
+	sk.UpdatedAt = time.Now().Format(time.RFC3339)
+	s.save()
+	return nil
+}
+
+func (s *SkillStore) Archive(id string, archived bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sk, ok := s.skills[id]
+	if !ok {
+		return errors.New("not found")
+	}
+	sk.Archived = archived
+	sk.UpdatedAt = time.Now().Format(time.RFC3339)
+	s.save()
+	return nil
+}
+
+func (s *SkillStore) RunCurator(staleDays int) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	archivedCount := 0
+	for _, sk := range s.skills {
+		// Skip builtin, pinned, already archived, or user-created skills
+		if sk.Builtin || sk.Pinned || sk.Archived || sk.CreatedBy != "agent" {
+			continue
+		}
+		// Check if stale
+		if sk.LastUsedAt == "" {
+			sk.LastUsedAt = sk.CreatedAt
+		}
+		lastUsed, err := time.Parse(time.RFC3339, sk.LastUsedAt)
+		if err != nil {
+			continue
+		}
+		if now.Sub(lastUsed) > time.Duration(staleDays)*24*time.Hour {
+			sk.Archived = true
+			sk.UpdatedAt = now.Format(time.RFC3339)
+			archivedCount++
+			log.Printf("[CURATOR] Archived stale skill: %s (last used: %s)", sk.Name, sk.LastUsedAt)
+		}
+	}
+	if archivedCount > 0 {
+		s.save()
+	}
+	return archivedCount
+}
+
+func (s *SkillStore) CuratorStatus() map[string]any {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	total := 0
+	agentCreated := 0
+	pinned := 0
+	archived := 0
+	for _, sk := range s.skills {
+		if sk.Builtin {
+			continue
+		}
+		total++
+		if sk.CreatedBy == "agent" {
+			agentCreated++
+		}
+		if sk.Pinned {
+			pinned++
+		}
+		if sk.Archived {
+			archived++
+		}
+	}
+	return map[string]any{
+		"total":         total,
+		"agent_created": agentCreated,
+		"pinned":        pinned,
+		"archived":      archived,
+	}
+}
+
 // ════════════════════════════════════════════════
 // Invite Code
 
@@ -768,45 +648,6 @@ type InviteCode struct {
 	CreatedAt string `json:"created_at"`
 }
 
-type InviteCodeStore struct {
-	path  string
-	mu    sync.RWMutex
-	codes map[string]*InviteCode // code -> InviteCode
-}
-
-func NewInviteCodeStore(path string) *InviteCodeStore {
-	s := &InviteCodeStore{path: path, codes: make(map[string]*InviteCode)}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	s.load()
-	return s
-}
-
-func (s *InviteCodeStore) load() {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var items []*InviteCode
-	if err := json.Unmarshal(data, &items); err != nil {
-		log.Printf("InviteCodeStore load error: %v", err)
-		return
-	}
-	for _, ic := range items {
-		s.codes[ic.Code] = ic
-	}
-}
-
-func (s *InviteCodeStore) save() {
-	list := make([]*InviteCode, 0, len(s.codes))
-	for _, ic := range s.codes {
-		list = append(list, ic)
-	}
-	data, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		log.Printf("InviteCodeStore save error: %v", err)
-	}
-}
-
 func generateInviteCode() string {
 	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
 	code := make([]byte, 8)
@@ -815,87 +656,6 @@ func generateInviteCode() string {
 		code[i] = chars[n.Int64()]
 	}
 	return string(code)
-}
-
-func (s *InviteCodeStore) Create(createdBy string) *InviteCode {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ic := &InviteCode{
-		Code:      generateInviteCode(),
-		CreatedBy: createdBy,
-		MaxUses:   5,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	s.codes[ic.Code] = ic
-	s.save()
-	return ic
-}
-
-func (s *InviteCodeStore) ValidateAndUse(code, userID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ic, ok := s.codes[code]
-	if !ok {
-		return errors.New("invalid invite code")
-	}
-	if ic.UseCount >= ic.MaxUses {
-		return errors.New("invite code has reached maximum uses")
-	}
-	ic.UseCount++
-	if userID != "" {
-		ic.UsedBy = append(ic.UsedBy, userID)
-	}
-	s.save()
-	return nil
-}
-
-func (s *InviteCodeStore) SetUsedBy(code, userID string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ic, ok := s.codes[code]
-	if !ok {
-		return
-	}
-	ic.UsedBy = append(ic.UsedBy, userID)
-	s.save()
-}
-
-func (s *InviteCodeStore) ListByUser(userID string) []*InviteCode {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*InviteCode, 0)
-	for _, ic := range s.codes {
-		if ic.CreatedBy == userID {
-			result = append(result, ic)
-		}
-	}
-	return result
-}
-
-func (s *InviteCodeStore) GetByUser(userID string) *InviteCode {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for _, ic := range s.codes {
-		if ic.CreatedBy == userID {
-			return ic
-		}
-	}
-	// Create one if none exists
-	ic := &InviteCode{
-		Code:      generateInviteCode(),
-		CreatedBy: userID,
-		MaxUses:   5,
-		CreatedAt: time.Now().Format(time.RFC3339),
-	}
-	s.codes[ic.Code] = ic
-	s.save()
-	return ic
-}
-
-func (s *InviteCodeStore) Count() int {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.codes)
 }
 
 // ════════════════════════════════════════════════
@@ -926,84 +686,6 @@ func (t *Team) MemberNames() string {
 	return strings.Join(names, ", ")
 }
 
-type TeamStore struct {
-	path  string
-	mu    sync.RWMutex
-	teams map[string]*Team
-}
-
-func NewTeamStore(path string) *TeamStore {
-	s := &TeamStore{path: path, teams: make(map[string]*Team)}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	s.load()
-	return s
-}
-
-func (s *TeamStore) load() {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var items []*Team
-	if err := json.Unmarshal(data, &items); err != nil {
-		log.Printf("TeamStore load error: %v", err)
-		return
-	}
-	for _, t := range items {
-		s.teams[t.ID] = t
-	}
-}
-
-func (s *TeamStore) save() {
-	list := make([]*Team, 0, len(s.teams))
-	for _, t := range s.teams {
-		list = append(list, t)
-	}
-	data, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		log.Printf("TeamStore save error: %v", err)
-	}
-}
-
-func (s *TeamStore) List(userID string, isAdmin bool) []*Team {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*Team, 0)
-	for _, t := range s.teams {
-		if t.Builtin || t.UserID == userID || isAdmin {
-			result = append(result, t)
-		}
-	}
-	return result
-}
-
-func (s *TeamStore) Get(id string) *Team {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.teams[id]
-}
-
-func (s *TeamStore) Create(t *Team) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.teams[t.ID] = t
-	s.save()
-}
-
-func (s *TeamStore) Update(t *Team) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.teams[t.ID] = t
-	s.save()
-}
-
-func (s *TeamStore) Delete(id string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.teams, id)
-	s.save()
-}
-
 // ════════════════════════════════════════════════
 // Chat Engine
 
@@ -1012,6 +694,7 @@ type ChatEngine struct {
 	apiKey             string
 	baseURL            string
 	store              *store.SQLite
+	appDB              *sql.DB            // App-level SQLite (users, sessions, teams, etc.)
 	userStore          *UserStore
 	agentStore         *AgentStore
 	sessionStore       *SessionStore
@@ -1020,8 +703,13 @@ type ChatEngine struct {
 	runtimeSkillEngine *SkillEngine
 	inviteCodeStore    *InviteCodeStore
 	teamStore          *TeamStore
+	memoryStore        *MemoryStore
+	memorySkill        *memory.Skill  // Persistent memory
+	cronSkill          *CronSkill     // Scheduled jobs
 	tools              map[string]ToolHandler
 	allSchemas         []types.ToolSchema
+	activeCancels      map[string]context.CancelFunc // sessionID -> cancel
+	activeCancelsMu    sync.Mutex
 }
 
 func NewChatEngine() (*ChatEngine, error) {
@@ -1035,7 +723,7 @@ func NewChatEngine() (*ChatEngine, error) {
 	provider := llm.NewOpenAI(apiKey, baseURL, model)
 
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".hermes-chat")
+	dataDir := filepath.Join(home, ".crux-chat")
 
 	dbPath := filepath.Join(dataDir, "chat.db")
 	s, err := store.NewSQLite(dbPath)
@@ -1043,24 +731,47 @@ func NewChatEngine() (*ChatEngine, error) {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
 
+	// Open app-level DB for users/sessions/teams/etc.
+	appDB, err := openAppDB(dataDir)
+	if err != nil {
+		return nil, fmt.Errorf("open app db: %w", err)
+	}
+	// Migrate JSON data to DB (one-time, no-op if already done)
+	migrateJSONToDB(appDB, dataDir)
+
 	engine := &ChatEngine{
 		defaultProvider:    provider,
 		apiKey:             apiKey,
 		baseURL:            baseURL,
 		store:              s,
-		userStore:          NewUserStore(filepath.Join(dataDir, "users.json")),
+		appDB:              appDB,
+		userStore:          NewUserStore(appDB),
 		agentStore:         NewAgentStore(filepath.Join(dataDir, "agents.json")),
-		sessionStore:       NewSessionStore(filepath.Join(dataDir, "sessions.json")),
+		sessionStore:       NewSessionStore(appDB),
 		providerStore:      NewModelProviderStore(filepath.Join(dataDir, "model_providers.json")),
 		skillStore:         NewSkillStore(filepath.Join(dataDir, "skills.json")),
-		runtimeSkillEngine: NewSkillEngine(provider, filepath.Join(dataDir, "runtime_skills.json")),
-		inviteCodeStore:    NewInviteCodeStore(filepath.Join(dataDir, "invite_codes.json")),
-		teamStore:          NewTeamStore(filepath.Join(dataDir, "teams.json")),
+		runtimeSkillEngine: NewSkillEngine(provider, appDB),
+		inviteCodeStore:    NewInviteCodeStore(appDB),
+		teamStore:          NewTeamStore(appDB),
+		memoryStore:        NewMemoryStore(appDB),
 		tools:              make(map[string]ToolHandler),
+		activeCancels:      make(map[string]context.CancelFunc),
 	}
 
 	// Start runtime skill cleanup loop
 	go engine.runtimeSkillEngine.StartCleanupLoop(context.Background())
+
+	// Start curator loop (runs daily, archives skills unused for 30+ days)
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			count := engine.skillStore.RunCurator(30)
+			if count > 0 {
+				log.Printf("[CURATOR] Archived %d stale skills", count)
+			}
+		}
+	}()
 
 	// Register tools
 	workDir, _ := os.Getwd()
@@ -1075,6 +786,28 @@ func NewChatEngine() (*ChatEngine, error) {
 	memDir := filepath.Join(dataDir, "memory")
 	mem := memory.New(memDir)
 	mem.Init(nil)
+	engine.registerToolSet(mem.ToolSchemas(), mem.Handle)
+	engine.memorySkill = mem
+
+	// Register web search skill (web_search + fetch_url)
+	webSearch := NewWebSearchSkill()
+	engine.registerMapToolSet(webSearch.ToolSchemas(), webSearch.Handle)
+
+	// Register cron skill (cron_add + cron_list + cron_remove)
+	cronSkill := NewCronSkill()
+	cronSkill.SetEngine(engine)
+	engine.registerMapToolSet(cronSkill.ToolSchemas(), cronSkill.Handle)
+	engine.cronSkill = cronSkill
+
+	// Register skill management tools (skill_manage + skill_list)
+	skillMgmt := NewSkillManageTool()
+	skillMgmt.SetEngine(engine)
+	engine.registerMapToolSet(skillMgmt.ToolSchemas(), skillMgmt.Handle)
+
+	// Register context compaction tool (compact_messages)
+	compaction := NewCompactionSkill()
+	compaction.SetEngine(engine)
+	engine.registerMapToolSet(compaction.ToolSchemas(), compaction.Handle)
 
 	// Seed builtin agent if none
 	hasBuiltin := false
@@ -1086,13 +819,25 @@ func NewChatEngine() (*ChatEngine, error) {
 	}
 	if !hasBuiltin {
 		engine.agentStore.Create(&AgentConfig{
-			ID:           "default",
-			Name:         "Hermes",
-			Description:  "通用 AI 助手，可使用所有工具",
-			Model:        model,
-			SystemPrompt: "你是 Hermes，一个有用的 AI 助手。你可以使用工具帮助用户。请简洁准确地回答。",
-			Tools:        engine.toolNames(),
-			Builtin:      true,
+			ID:      "default",
+			Name:    "Crux",
+			Description: "通用 AI 助手，可使用所有工具",
+			Model:   model,
+			SystemPrompt: `你是 益枢(Crux)，一个有用的 AI 助手。你可以使用工具帮助用户完成各种任务。请简洁准确地回答。
+
+你拥有以下能力：
+- 文件操作：read_file, write_file, patch_file, search_content, search_files
+- 系统信息：get_time, get_os, get_cwd, get_env
+- 命令执行：exec（运行shell命令）
+- 网络搜索：web_search（搜索网页）, fetch_url（抓取网页内容）
+- 持久记忆：memory_save, memory_search, memory_list, memory_delete
+- 定时任务：cron_add, cron_list, cron_remove
+- 技能管理：skill_manage, skill_list
+- 上下文压缩：compact_messages
+
+当学到重要信息时，使用 memory_save 保存记忆。当完成复杂任务后，考虑用 skill_manage 沉淀可复用的技能。`,
+			Tools:   engine.toolNames(),
+			Builtin: true,
 		})
 	}
 
@@ -1130,23 +875,50 @@ func NewChatEngine() (*ChatEngine, error) {
 			Name:        "Terminal",
 			Description: "Execute shell commands on the system",
 			Icon:        "🖥️",
-			Prompt:      "You have access to a terminal. Use the run_command tool to execute shell commands when the user asks for system operations, file manipulation, or running scripts.",
-			Tools:       []string{"run_command"},
+			Prompt:      "You have access to a terminal. Use the exec tool to execute shell commands when the user asks for system operations, file manipulation, or running scripts.",
+			Tools:       []string{"exec"},
 			Builtin:     true,
 		})
 		engine.skillStore.Create(&UserSkill{
 			ID:          "web-search",
 			Name:        "Web Search",
-			Description: "Search the web for information",
+			Description: "Search the web and fetch URLs for up-to-date information",
 			Icon:        "🔍",
-			Prompt:      "You can search the web for up-to-date information. Use web_search tool when the user asks about current events, needs real-time data, or when your knowledge might be outdated.",
-			Tools:       []string{"web_search"},
+			Prompt:      "You can search the web for up-to-date information. Use web_search tool when the user asks about current events, needs real-time data, or when your knowledge might be outdated. Use fetch_url to read the content of a specific URL.",
+			Tools:       []string{"web_search", "fetch_url"},
+			Builtin:     true,
+		})
+		engine.skillStore.Create(&UserSkill{
+			ID:          "cron",
+			Name:        "Scheduled Tasks",
+			Description: "Create and manage scheduled background tasks",
+			Icon:        "⏰",
+			Prompt:      "You can schedule tasks to run periodically in the background. Use cron_add to create a job, cron_list to see all jobs, cron_remove to delete one.",
+			Tools:       []string{"cron_add", "cron_list", "cron_remove"},
+			Builtin:     true,
+		})
+		engine.skillStore.Create(&UserSkill{
+			ID:          "skill-management",
+			Name:        "Skill Management",
+			Description: "Create, manage, and evolve reusable skills",
+			Icon:        "🧩",
+			Prompt:      "You can create and manage reusable skills. Use skill_manage to create/update/archive/pin skills. Use skill_list to browse available skills. After completing complex tasks (5+ tool calls), consider creating a skill to remember the workflow.",
+			Tools:       []string{"skill_manage", "skill_list"},
+			Builtin:     true,
+		})
+		engine.skillStore.Create(&UserSkill{
+			ID:          "context-compaction",
+			Name:        "Context Compaction",
+			Description: "Compress long conversation contexts",
+			Icon:        "📦",
+			Prompt:      "If the conversation is getting very long and you're losing context, use compact_messages to compress older messages into a summary.",
+			Tools:       []string{"compact_messages"},
 			Builtin:     true,
 		})
 	}
 
-	log.Printf("Hermes Chat: %d tools, %d agents, %d users",
-		len(engine.allSchemas), len(engine.agentStore.agents), len(engine.userStore.users))
+	log.Printf("Crux Chat: %d tools, %d agents, %d users",
+		len(engine.allSchemas), len(engine.agentStore.agents), len(engine.userStore.List()))
 	return engine, nil
 }
 
@@ -1154,6 +926,48 @@ func (e *ChatEngine) registerToolSet(schemas []types.ToolSchema, handler func(ty
 	for _, s := range schemas {
 		e.allSchemas = append(e.allSchemas, s)
 		e.tools[s.Name] = ToolHandler{Schema: s, Handler: handler}
+	}
+}
+
+// registerMapToolSet registers tools that use map[string]interface{} schemas (OpenAI format).
+// This bridges the new skill interface with the existing ToolSchema-based system.
+func (e *ChatEngine) registerMapToolSet(schemas []map[string]interface{}, handler func(name string, args map[string]interface{}) (string, error)) {
+	for _, schemaMap := range schemas {
+		fn, ok := schemaMap["function"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		name, _ := fn["name"].(string)
+		if name == "" {
+			continue
+		}
+		desc, _ := fn["description"].(string)
+		params, _ := fn["parameters"].(map[string]any)
+
+		schema := types.ToolSchema{
+			Name:        name,
+			Description: desc,
+			Parameters:  params,
+		}
+		e.allSchemas = append(e.allSchemas, schema)
+
+		// Capture name and handler for closure
+		toolName := name
+		toolHandler := handler
+		e.tools[name] = ToolHandler{
+			Schema: schema,
+			Handler: func(tc types.ToolCall) types.ToolResult {
+				var args map[string]interface{}
+				if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+					return types.ToolResult{ToolCallID: tc.ID, Content: fmt.Sprintf("Error: invalid arguments: %v", err), IsError: true}
+				}
+				content, err := toolHandler(toolName, args)
+				if err != nil {
+					return types.ToolResult{ToolCallID: tc.ID, Content: fmt.Sprintf("Error: %v", err), IsError: true}
+				}
+				return types.ToolResult{ToolCallID: tc.ID, Content: content}
+			},
+		}
 	}
 }
 
@@ -1251,7 +1065,7 @@ type MessageResp struct {
 	Role       string `json:"role"`
 	Content    string `json:"content"`
 	Name       string `json:"name,omitempty"`
-	ToolCalls  string `json:"tool_calls,omitempty"`
+	ToolCalls  json.RawMessage `json:"tool_calls,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	CreatedAt  string `json:"created_at"`
 }
@@ -1307,7 +1121,7 @@ func optionalAuth(userStore *UserStore) gin.HandlerFunc {
 
 func main() {
 	home, _ := os.UserHomeDir()
-	dataDir := filepath.Join(home, ".hermes-chat")
+	dataDir := filepath.Join(home, ".crux-chat")
 
 	engine, err := NewChatEngine()
 	if err != nil {
@@ -1337,7 +1151,7 @@ func main() {
 		c.JSON(200, gin.H{
 			"status": "ok",
 			"model":  engine.defaultProvider.Model(),
-			"engine": "hermes-go",
+			"engine": "crux-go",
 			"tools":  len(engine.allSchemas),
 		})
 	})
@@ -1358,11 +1172,13 @@ func main() {
 
 		// Chat
 		auth.POST("/chat", engine.HandleChat)
+		auth.POST("/chat/cancel", engine.HandleChatCancel)
 
 		// Sessions
 		auth.GET("/sessions", engine.ListSessions)
 		auth.GET("/sessions/:id/messages", engine.GetSessionMessages)
 		auth.PUT("/sessions/:id", engine.UpdateSession)
+		auth.DELETE("/sessions/:id", engine.DeleteSession)
 
 		// Agents
 		auth.GET("/agents", engine.ListAgents)
@@ -1391,6 +1207,12 @@ func main() {
 		auth.PUT("/skills/:id", engine.UpdateSkill)
 		auth.DELETE("/skills/:id", engine.DeleteSkill)
 		auth.POST("/admin/skills", engine.CreateBuiltinSkill)
+
+		// Curator endpoints
+		auth.GET("/curator/status", engine.CuratorStatus)
+		auth.POST("/curator/run", engine.RunCurator)
+		auth.POST("/skills/:id/pin", engine.PinSkill)
+		auth.POST("/skills/:id/archive", engine.ArchiveSkill)
 
 		// Runtime Skills (auto-generated by skill engine)
 		auth.GET("/runtime-skills", engine.ListRuntimeSkills)
@@ -1425,7 +1247,7 @@ func main() {
 	// Auto-start enabled platforms
 	gwManager.Start()
 
-	log.Printf("Hermes Chat on %s (model: %s, tools: %d)",
+	log.Printf("Crux Chat on %s (model: %s, tools: %d)",
 		listenAddr, engine.defaultProvider.Model(), len(engine.allSchemas))
 	r.Run(listenAddr)
 }
@@ -1577,7 +1399,7 @@ func (e *ChatEngine) GetSessionMessages(c *gin.Context) {
 	for _, m := range msgs {
 		result = append(result, MessageResp{
 			ID: m.ID, Role: m.Role, Content: m.Content, Name: m.Name,
-			ToolCalls: string(m.ToolCalls), ToolCallID: m.ToolCallID, CreatedAt: m.CreatedAt.Format(time.RFC3339),
+			ToolCalls: m.ToolCalls, ToolCallID: m.ToolCallID, CreatedAt: m.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	c.JSON(200, gin.H{"messages": result, "session": sess})
@@ -1608,6 +1430,10 @@ func (e *ChatEngine) DeleteSession(c *gin.Context) {
 	if err := e.sessionStore.Delete(id, userID); err != nil {
 		c.JSON(404, gin.H{"error": err.Error()})
 		return
+	}
+	// Also delete messages from SQLite (CASCADE handles it, but be explicit)
+	if err := e.store.DeleteSession(id); err != nil {
+		log.Printf("Warning: failed to delete session messages from SQLite: %v", err)
 	}
 	c.JSON(200, gin.H{"ok": true})
 }
@@ -1689,12 +1515,16 @@ func (e *ChatEngine) ListTools(c *gin.Context) {
 
 func (e *ChatEngine) HandleChat(c *gin.Context) {
 	userID := c.GetString("userID")
+	log.Printf("[CHAT] Request from user=%s", userID)
 
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		log.Printf("[CHAT] Bind error: %v", err)
 		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
+	log.Printf("[CHAT] Session=%s, Agents=%v, TeamID=%s, Messages=%d, Skills=%v",
+		req.Session, req.AgentIDs, req.TeamID, len(req.Messages), req.SkillIDs)
 
 	// Resolve agents
 	agentIDs := req.AgentIDs
@@ -1746,6 +1576,7 @@ func (e *ChatEngine) HandleChat(c *gin.Context) {
 		msg.ToolCallID = m.ToolCallID
 		messages = append(messages, msg)
 	}
+	log.Printf("[CHAT] Loaded %d history messages for session=%s", len(messages), sessionID)
 
 	// Append only the NEW user message (last in req.Messages)
 	// Frontend sends full conversation, but we already have history from DB
@@ -1861,6 +1692,8 @@ func (e *ChatEngine) HandleChat(c *gin.Context) {
 }
 
 func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *AgentConfig, messages []types.Message, sessionID string, skillIDs []string, userID string, extraTools map[string]ToolHandler, systemAppend string) {
+	log.Printf("[AGENT] Starting agent=%s, session=%s, messages=%d, skills=%v", agent.Name, sessionID, len(messages), skillIDs)
+
 	// Start tracking for runtime skill engine
 	e.runtimeSkillEngine.tracker.StartSession(sessionID)
 	defer func() {
@@ -1874,6 +1707,16 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Minute)
 	defer cancel()
 
+	// Register cancel func so /api/chat/cancel can abort this session
+	e.activeCancelsMu.Lock()
+	e.activeCancels[sessionID] = cancel
+	e.activeCancelsMu.Unlock()
+	defer func() {
+		e.activeCancelsMu.Lock()
+		delete(e.activeCancels, sessionID)
+		e.activeCancelsMu.Unlock()
+	}()
+
 	provider := e.getProvider(agent.Model, userID)
 	schemas := e.getSchemas(agent.Tools)
 	for _, th := range extraTools {
@@ -1884,8 +1727,47 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 		maxRounds = 10
 	}
 
-	// Build system prompt with skill prompts
+	// Build system prompt with skill prompts and memory
 	systemContent := agent.SystemPrompt
+
+	// Inject memory context
+	if e.memorySkill != nil {
+		memText := e.memorySkill.GetMemoryText()
+		if memText != "" {
+			systemContent += "\n\n## Your Memory\n" + memText
+		}
+	}
+
+	// Add memory and skill management instructions
+	systemContent += `
+
+## Memory & Skill Management
+You have persistent memory across sessions. Use these tools to remember important information:
+
+**When to save memories (memory_save):**
+- User preferences, habits, or personal details
+- Environment details (OS, tools, paths, configs)
+- Tool quirks, API behaviors, or workarounds you discovered
+- Corrections the user gives you
+- Stable conventions that will be useful in future sessions
+
+**When NOT to save:**
+- Task progress, session outcomes, or temporary state
+- Things that will be stale in a week
+- Raw data dumps
+
+**Format memories as declarative facts:**
+- "User prefers concise responses" ✓
+- "Always respond concisely" ✗ (imperative)
+
+**When to create skills (skill_manage):**
+- After complex tasks (5+ tool calls) that succeeded
+- When you discover a reusable workflow
+- When fixing a tricky error that others might encounter
+- When the user corrects your approach and it works
+
+**Curator:** Skills you create are tracked automatically. Unused skills get archived after 30 days. Pin important skills to protect them.`
+
 	var skillEnvKeys []string
 	if len(skillIDs) > 0 {
 		for _, sid := range skillIDs {
@@ -1960,6 +1842,9 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 	thinkingRe := regexp.MustCompile(`(?s)<think>(.*?)</think>`)
 	// Regex for detecting markdown images
 	imageRe := regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	// Regex for MiMo tool call delimiter tokens (leak into content field)
+	toolDelimRe := regexp.MustCompile(`<｜tool[▁_](?:calls[▁_]begin|call[▁_]end|calls[▁_]end)｜>`)
+	toolDelimPartialRe := regexp.MustCompile(`(?:<｜tool[▁_]|<｜tool[▁_]calls[▁_]|<｜tool[▁_]call[▁_])$`)
 
 	hasContent := false
 	for round := 0; round < maxRounds; round++ {
@@ -2001,8 +1886,15 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 						}
 					}
 				}
-				fullContent += chunk.Delta
-				sseSend(c, flusher, "delta", chunk.Delta, false)
+				// Strip MiMo tool call delimiter tokens that leak into content
+				cleanDelta := toolDelimRe.ReplaceAllString(chunk.Delta, "")
+				// Also strip partial tokens at end of chunk (split across chunks)
+				cleanDelta = toolDelimPartialRe.ReplaceAllString(cleanDelta, "")
+				if cleanDelta == "" {
+					continue
+				}
+				fullContent += cleanDelta
+				sseSend(c, flusher, "delta", cleanDelta, false)
 			}
 			if len(chunk.ToolCalls) > 0 {
 				toolCalls = append(toolCalls, chunk.ToolCalls...)
@@ -2014,7 +1906,10 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 
 		if len(toolCalls) == 0 {
 			hasContent = true
+			// Final cleanup: strip any remaining tool delimiter tokens
+			fullContent = toolDelimRe.ReplaceAllString(fullContent, "")
 			e.saveMsg(sessionID, types.Message{Role: "assistant", Content: fullContent, Name: agent.Name})
+			log.Printf("[AGENT] Round %d: text response (%d chars)", round, len(fullContent))
 			// Parse images from final content
 			imageMatches := imageRe.FindAllStringSubmatch(fullContent, -1)
 			for _, match := range imageMatches {
@@ -2037,6 +1932,7 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 		assistantMsg := types.Message{Role: "assistant", Content: fullContent, ToolCalls: toolCalls, Name: agent.Name}
 		e.saveMsg(sessionID, assistantMsg)
 		allMessages = append(allMessages, assistantMsg)
+		log.Printf("[AGENT] Round %d: %d tool calls requested", round, len(toolCalls))
 
 		for _, tc := range toolCalls {
 			// Send enhanced tool_call event with arguments
@@ -2072,6 +1968,8 @@ func (e *ChatEngine) runAgentLoop(c *gin.Context, flusher http.Flusher, agent *A
 			result = types.ToolResult{ToolCallID: tc.ID, Content: "tool execution timeout"}
 		}
 		duration := time.Since(start).Milliseconds()
+
+			log.Printf("[TOOL] %s completed in %dms, result=%d chars", tc.Function.Name, duration, len(result.Content))
 
 			// Track for runtime skill engine
 			e.runtimeSkillEngine.tracker.RecordCall(sessionID, TrackedCall{
@@ -2317,6 +2215,10 @@ func (e *ChatEngine) runSubAgentSync(ctx context.Context, agent *AgentConfig, ta
 			}
 		}
 
+		// Strip MiMo tool call delimiter tokens
+		toolDelimRe := regexp.MustCompile(`<｜tool[▁_](?:calls[▁_]begin|call[▁_]end|calls[▁_]end)｜>`)
+		fullContent = toolDelimRe.ReplaceAllString(fullContent, "")
+
 		if len(toolCalls) == 0 {
 			return fullContent
 		}
@@ -2412,11 +2314,30 @@ func sseSend(c *gin.Context, flusher http.Flusher, event, data string, done bool
 	flusher.Flush()
 }
 
+func (e *ChatEngine) HandleChatCancel(c *gin.Context) {
+	var req struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.SessionID == "" {
+		c.JSON(400, gin.H{"error": "session_id required"})
+		return
+	}
+	e.activeCancelsMu.Lock()
+	cancel, ok := e.activeCancels[req.SessionID]
+	e.activeCancelsMu.Unlock()
+	if !ok {
+		c.JSON(200, gin.H{"ok": true, "msg": "no active session (already finished?)"})
+		return
+	}
+	cancel()
+	c.JSON(200, gin.H{"ok": true})
+}
+
 func (e *ChatEngine) HandleModels(c *gin.Context) {
 	c.JSON(200, gin.H{
 		"models":  []string{e.defaultProvider.Model()},
 		"current": e.defaultProvider.Model(),
-		"engine":  "hermes-go",
+		"engine":  "crux-go",
 	})
 }
 
@@ -2625,6 +2546,56 @@ func (e *ChatEngine) ListBuiltinSkills(c *gin.Context) {
 		return
 	}
 	c.JSON(200, gin.H{"skills": e.skillStore.ListBuiltin()})
+}
+
+// Curator handlers
+
+func (e *ChatEngine) CuratorStatus(c *gin.Context) {
+	c.JSON(200, e.skillStore.CuratorStatus())
+}
+
+func (e *ChatEngine) RunCurator(c *gin.Context) {
+	var body struct {
+		StaleDays int `json:"stale_days"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		body.StaleDays = 30
+	}
+	if body.StaleDays <= 0 {
+		body.StaleDays = 30
+	}
+	count := e.skillStore.RunCurator(body.StaleDays)
+	c.JSON(200, gin.H{"archived": count, "stale_days": body.StaleDays})
+}
+
+func (e *ChatEngine) PinSkill(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Pinned bool `json:"pinned"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		body.Pinned = true
+	}
+	if err := e.skillStore.Pin(id, body.Pinned); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true, "pinned": body.Pinned})
+}
+
+func (e *ChatEngine) ArchiveSkill(c *gin.Context) {
+	id := c.Param("id")
+	var body struct {
+		Archived bool `json:"archived"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		body.Archived = true
+	}
+	if err := e.skillStore.Archive(id, body.Archived); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(200, gin.H{"ok": true, "archived": body.Archived})
 }
 
 func truncateStr(s string, maxLen int) string {

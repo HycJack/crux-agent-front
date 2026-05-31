@@ -2,11 +2,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -47,6 +46,9 @@ type RuntimeSkill struct {
 
 	// Source tracking
 	SourceSession string `json:"source_session"`
+
+	// Multi-user
+	UserID string `json:"user_id"`
 }
 
 type SkillStep struct {
@@ -55,154 +57,6 @@ type SkillStep struct {
 	Args     map[string]interface{} `json:"args,omitempty"`
 	Purpose  string                 `json:"purpose"`
 	Optional bool                   `json:"optional"`
-}
-
-// ════════════════════════════════════════════════
-// Runtime Skill Store
-// ════════════════════════════════════════════════
-
-type RuntimeSkillStore struct {
-	path   string
-	mu     sync.RWMutex
-	skills map[string]*RuntimeSkill
-}
-
-func NewRuntimeSkillStore(path string) *RuntimeSkillStore {
-	s := &RuntimeSkillStore{path: path, skills: make(map[string]*RuntimeSkill)}
-	os.MkdirAll(filepath.Dir(path), 0o755)
-	s.load()
-	return s
-}
-
-func (s *RuntimeSkillStore) load() {
-	data, err := os.ReadFile(s.path)
-	if err != nil {
-		return
-	}
-	var items []*RuntimeSkill
-	if err := json.Unmarshal(data, &items); err != nil {
-		log.Printf("RuntimeSkillStore load error: %v", err)
-		return
-	}
-	for _, sk := range items {
-		s.skills[sk.ID] = sk
-	}
-}
-
-func (s *RuntimeSkillStore) save() {
-	list := make([]*RuntimeSkill, 0, len(s.skills))
-	for _, sk := range s.skills {
-		list = append(list, sk)
-	}
-	data, _ := json.MarshalIndent(list, "", "  ")
-	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		log.Printf("RuntimeSkillStore save error: %v", err)
-	}
-}
-
-func (s *RuntimeSkillStore) Get(id string) *RuntimeSkill {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.skills[id]
-}
-
-func (s *RuntimeSkillStore) List() []*RuntimeSkill {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*RuntimeSkill, 0, len(s.skills))
-	for _, sk := range s.skills {
-		result = append(result, sk)
-	}
-	return result
-}
-
-func (s *RuntimeSkillStore) Create(sk *RuntimeSkill) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if sk.ID == "" {
-		sk.ID = fmt.Sprintf("rtskill-%d", time.Now().UnixNano())
-	}
-	now := time.Now()
-	sk.CreatedAt = now
-	sk.UpdatedAt = now
-	if sk.Version == 0 {
-		sk.Version = 1
-	}
-	if sk.State == "" {
-		sk.State = "active"
-	}
-	s.skills[sk.ID] = sk
-	s.save()
-	return nil
-}
-
-func (s *RuntimeSkillStore) Update(sk *RuntimeSkill) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	existing, ok := s.skills[sk.ID]
-	if !ok {
-		return fmt.Errorf("not found")
-	}
-	sk.CreatedAt = existing.CreatedAt
-	sk.CreatedBy = existing.CreatedBy
-	sk.SourceSession = existing.SourceSession
-	sk.UpdatedAt = time.Now()
-	s.skills[sk.ID] = sk
-	s.save()
-	return nil
-}
-
-func (s *RuntimeSkillStore) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.skills[id]; !ok {
-		return fmt.Errorf("not found")
-	}
-	delete(s.skills, id)
-	s.save()
-	return nil
-}
-
-func (s *RuntimeSkillStore) ListByState(state string) []*RuntimeSkill {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*RuntimeSkill, 0)
-	for _, sk := range s.skills {
-		if sk.State == state {
-			result = append(result, sk)
-		}
-	}
-	return result
-}
-
-func (s *RuntimeSkillStore) ListByTool(toolName string) []*RuntimeSkill {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	result := make([]*RuntimeSkill, 0)
-	for _, sk := range s.skills {
-		for _, t := range sk.Tools {
-			if t == toolName {
-				result = append(result, sk)
-				break
-			}
-		}
-	}
-	return result
-}
-
-func (s *RuntimeSkillStore) Search(query string) []*RuntimeSkill {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	q := strings.ToLower(query)
-	result := make([]*RuntimeSkill, 0)
-	for _, sk := range s.skills {
-		if strings.Contains(strings.ToLower(sk.Name), q) ||
-			strings.Contains(strings.ToLower(sk.Description), q) ||
-			strings.Contains(strings.ToLower(sk.Trigger), q) {
-			result = append(result, sk)
-		}
-	}
-	return result
 }
 
 // ════════════════════════════════════════════════
@@ -628,8 +482,8 @@ type SkillEngine struct {
 	llmProvider llm.Provider
 }
 
-func NewSkillEngine(provider llm.Provider, storePath string) *SkillEngine {
-	store := NewRuntimeSkillStore(storePath)
+func NewSkillEngine(provider llm.Provider, appDB *sql.DB) *SkillEngine {
+	store := NewRuntimeSkillStore(appDB)
 	return &SkillEngine{
 		store:       store,
 		tracker:     NewSkillTracker(),

@@ -6,7 +6,7 @@ const resources = {
   zh: {
     translation: {
       // Common
-      app_name: 'Hermes Chat',
+      app_name: 'Crux Chat',
       save: '保存',
       cancel: '取消',
       delete: '删除',
@@ -203,7 +203,7 @@ const resources = {
   },
   en: {
     translation: {
-      app_name: 'Hermes Chat',
+      app_name: 'Crux Chat',
       save: 'Save',
       cancel: 'Cancel',
       delete: 'Delete',

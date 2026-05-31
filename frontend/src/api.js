@@ -132,6 +132,10 @@ export function sseConnect(path, body, handlers) {
 }
 
 export const API = {
+  get: (path) => fetchJSON(path),
+  post: (path, data) => fetchJSON(path, { method: "POST", body: JSON.stringify(data) }),
+  put: (path, data) => fetchJSON(path, { method: "PUT", body: JSON.stringify(data) }),
+  delete: (path) => fetchJSON(path, { method: "DELETE" }),
   setToken,
 
   // Auth
@@ -156,11 +160,12 @@ export const API = {
   // Sessions
   listSessions: () => fetchJSON('/api/sessions'),
   getSessionMessages: (id, opts = {}) => fetchJSON(`/api/sessions/${id}/messages`, opts),
+  cancelChat: (sessionID) => fetchJSON('/api/chat/cancel', { method: 'POST', body: JSON.stringify({ session_id: sessionID }) }),
+  deleteSession: (id) => fetchJSON(`/api/sessions/${id}`, { method: 'DELETE' }),
   updateSession: (id, data) => fetchJSON(`/api/sessions/${id}`, {
     method: 'PUT',
     body: JSON.stringify(data),
   }),
-  deleteSession: (id) => fetchJSON(`/api/sessions/${id}`, { method: 'DELETE' }),
 
   // Agents
   listAgents: () => fetchJSON('/api/agents'),
