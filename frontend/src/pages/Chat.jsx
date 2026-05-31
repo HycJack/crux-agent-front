@@ -554,38 +554,42 @@ export default function Chat() {
 
           try {
             const parsed = JSON.parse(data)
+            const evt = parsed.event
+            const evtData = parsed.data
 
-            if (parsed.type === 'delta' && parsed.content) {
-              assistantMsg.content += parsed.content
+            if (evt === 'delta' && evtData) {
+              assistantMsg.content += evtData
               if (parsed.agent_name) setActiveAgentName(parsed.agent_name)
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = { ...assistantMsg }
                 return updated
               })
-            } else if (parsed.type === 'tool_call') {
-              assistantMsg.tool_calls.push(parsed.tool_call)
+            } else if (evt === 'tool_call') {
+              const tc = typeof evtData === 'string' ? JSON.parse(evtData) : evtData
+              assistantMsg.tool_calls.push({ id: tc.id, name: tc.name, args: tc.args, result: null })
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = { ...assistantMsg }
                 return updated
               })
-            } else if (parsed.type === 'tool_result') {
-              const tc = assistantMsg.tool_calls.find(tc => tc.id === parsed.tool_call_id)
-              if (tc) tc.result = parsed.result
+            } else if (evt === 'tool_result') {
+              const tr = typeof evtData === 'string' ? JSON.parse(evtData) : evtData
+              const tc = assistantMsg.tool_calls.find(t => t.id === tr.id)
+              if (tc) tc.result = tr.content
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = { ...assistantMsg }
                 return updated
               })
-            } else if (parsed.type === 'title') {
-              setSessions(prev => prev.map(s => s.id === session.id ? { ...s, title: parsed.title } : s))
-            } else if (parsed.type === 'compacting') {
+            } else if (evt === 'title_update') {
+              setSessions(prev => prev.map(s => s.id === session.id ? { ...s, title: evtData } : s))
+            } else if (evt === 'compact') {
               setCompacting(true)
-            } else if (parsed.type === 'compact_done') {
+            } else if (evt === 'compact_done') {
               setCompacting(false)
-            } else if (parsed.type === 'error') {
-              assistantMsg.content += `\n\n❌ ${parsed.message}`
+            } else if (evt === 'error') {
+              assistantMsg.content += `\n\n❌ ${evtData}`
               setMessages(prev => {
                 const updated = [...prev]
                 updated[updated.length - 1] = { ...assistantMsg }
@@ -792,8 +796,10 @@ export default function Chat() {
                     <MarkdownContent content={msg.content} streaming={streaming && i === messages.length - 1} onMermaidZoom={setMermaidCode} />
                   </div>
                 )}
-                {msg.created_at && <div className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</div>}
-                <MessageActions msg={msg} onResend={resendMessage} />
+                <div className="bubble-footer">
+                  {msg.created_at && <span className="msg-timestamp">{new Date(msg.created_at).toLocaleString()}</span>}
+                  <MessageActions msg={msg} onResend={resendMessage} />
+                </div>
               </div>
             </div>
           ))}

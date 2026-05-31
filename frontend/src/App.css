@@ -498,11 +498,15 @@ body {
   margin-bottom: 4px;
   letter-spacing: 0.3px;
 }
+.bubble-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
 .msg-timestamp {
   font-size: 0.68rem;
   color: var(--text-dim);
-  margin-top: 6px;
-  text-align: right;
   opacity: 0.5;
 }
 
@@ -514,8 +518,7 @@ body {
 .msg-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 6px;
+  gap: 4px;
   opacity: 0;
   transition: opacity 0.2s;
 }
