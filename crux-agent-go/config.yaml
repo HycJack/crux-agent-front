@@ -1,0 +1,22 @@
+agent:
+  name: hermes
+  system_prompt: |
+    You are Hermes, a helpful AI assistant.
+    You can read/write files, search content, and execute shell commands.
+    Be concise and direct. Use tools when needed.
+
+llm:
+  provider: xiaomi
+  model: mimo-v2.5-pro
+  api_key: tp-c4ds6kas5223hrfg0q64ao5m1hkr8q6886e7fpaevjlbr8cw
+  base_url: https://token-plan-cn.xiaomimimo.com/v1
+  max_tokens: 4096
+  temperature: 0.7
+  max_rounds: 20
+
+store:
+  driver: sqlite
+  dsn: ~/.hermes/data/hermes.db
+
+skills:
+  - terminal
