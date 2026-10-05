@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	crand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -307,7 +309,15 @@ func (gm *GatewayManager) getOrCreateUser(platform, platformUserID, userName str
 		return sess.UserID
 	}
 	username := platform + "_" + platformUserID
-	user, _ := gm.engine.userStore.Create(username, "gateway-no-login", userName)
+	// These accounts are reachable only through the messaging gateway. Give each
+	// one a random 256-bit secret so the account can never be claimed over
+	// POST /api/auth/login, and never let it take the first-user admin slot.
+	randomSecret := make([]byte, 32)
+	if _, err := crand.Read(randomSecret); err != nil {
+		log.Printf("gateway: failed to generate secret for %s: %v", username, err)
+		return ""
+	}
+	user, _ := gm.engine.userStore.CreateInternal(username, hex.EncodeToString(randomSecret), userName)
 	if user == nil {
 		// User might already exist with that username, try to find by name
 		existing := gm.engine.userStore.GetByUsername(username)

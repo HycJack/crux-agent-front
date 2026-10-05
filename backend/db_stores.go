@@ -344,7 +344,21 @@ func NewUserStore(db *sql.DB) *UserStore {
 	return &UserStore{db: db}
 }
 
+// Create inserts a new user. The very first user created becomes the admin
+// bootstrap account — callers that provision machine-owned accounts (e.g. the
+// messaging gateway) must use CreateInternal so they can never claim that slot.
 func (s *UserStore) Create(username, password, nickname string) (*User, error) {
+	return s.create(username, password, nickname, true)
+}
+
+// CreateInternal provisions a service account for an external system (gateway
+// bots). The role is always "user" and the password is never usable for login
+// because callers pass a cryptographically random secret.
+func (s *UserStore) CreateInternal(username, password, nickname string) (*User, error) {
+	return s.create(username, password, nickname, false)
+}
+
+func (s *UserStore) create(username, password, nickname string, allowAdminBootstrap bool) (*User, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Check duplicate
@@ -358,10 +372,16 @@ func (s *UserStore) Create(username, password, nickname string) (*User, error) {
 		return nil, err
 	}
 	role := "user"
-	var userCount int
-	s.db.QueryRow("SELECT COUNT(*) FROM app_users").Scan(&userCount)
-	if userCount == 0 {
-		role = "admin"
+	// Bootstrap the first *human* account as admin. Keying off "no admin exists
+	// yet" rather than "table is empty" means a gateway-provisioned service
+	// account (which is never eligible for admin) can no longer consume the
+	// admin slot and leave the deployment without any administrator.
+	if allowAdminBootstrap {
+		var adminCount int
+		s.db.QueryRow("SELECT COUNT(*) FROM app_users WHERE role = 'admin'").Scan(&adminCount)
+		if adminCount == 0 {
+			role = "admin"
+		}
 	}
 	user := &User{
 		ID:        fmt.Sprintf("user-%d", time.Now().UnixNano()),
@@ -838,6 +858,19 @@ func (s *RuntimeSkillStore) Get(id string) *RuntimeSkill {
 	return s.getByID(id)
 }
 
+// GetForUser returns the skill only if it belongs to userID. Use this in any
+// request handler — Get leaks other tenants' skills (which embed prompts,
+// steps and env var names).
+func (s *RuntimeSkillStore) GetForUser(id, userID string) *RuntimeSkill {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sk := s.getByID(id)
+	if sk == nil || sk.UserID != userID {
+		return nil
+	}
+	return sk
+}
+
 func (s *RuntimeSkillStore) List() []*RuntimeSkill {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -923,6 +956,29 @@ func (s *RuntimeSkillStore) ListByTool(toolName string) []*RuntimeSkill {
 	return s.query("SELECT id, name, description, trigger_text, steps, tools, env_vars, prompt, state, version, created_by, created_at, updated_at, use_count, patch_count, fail_count, last_used, last_patched, source_session, user_id FROM app_runtime_skills WHERE tools LIKE ?", "%"+toolName+"%")
 }
 
+// ── User-scoped variants, for HTTP request handlers ──────────────────────
+// The unscoped methods above are still used by the engine's internal
+// activation path; anything reachable from a route must use these.
+
+func (s *RuntimeSkillStore) ListByStateForUser(state, userID string) []*RuntimeSkill {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.query("SELECT id, name, description, trigger_text, steps, tools, env_vars, prompt, state, version, created_by, created_at, updated_at, use_count, patch_count, fail_count, last_used, last_patched, source_session, user_id FROM app_runtime_skills WHERE state = ? AND user_id = ?", state, userID)
+}
+
+func (s *RuntimeSkillStore) ListByToolForUser(toolName, userID string) []*RuntimeSkill {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.query("SELECT id, name, description, trigger_text, steps, tools, env_vars, prompt, state, version, created_by, created_at, updated_at, use_count, patch_count, fail_count, last_used, last_patched, source_session, user_id FROM app_runtime_skills WHERE tools LIKE ? AND user_id = ?", "%"+toolName+"%", userID)
+}
+
+func (s *RuntimeSkillStore) SearchForUser(query, userID string) []*RuntimeSkill {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	q := "%" + strings.ToLower(query) + "%"
+	return s.query("SELECT id, name, description, trigger_text, steps, tools, env_vars, prompt, state, version, created_by, created_at, updated_at, use_count, patch_count, fail_count, last_used, last_patched, source_session, user_id FROM app_runtime_skills WHERE (LOWER(name) LIKE ? OR LOWER(description) LIKE ? OR LOWER(trigger_text) LIKE ?) AND user_id = ?", q, q, q, userID)
+}
+
 func (s *RuntimeSkillStore) Search(query string) []*RuntimeSkill {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -949,9 +1005,14 @@ func (s *RuntimeSkillStore) query(sqlStr string, args ...any) []*RuntimeSkill {
 		sk := &RuntimeSkill{}
 		var stepsStr, toolsStr, envVarsStr string
 		var lastUsed, lastPatched sql.NullTime
-		rows.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Trigger, &stepsStr, &toolsStr, &envVarsStr,
+		// A scan error previously left a zero-valued struct in the result slice,
+		// which then failed downstream ownership checks. Skip and log instead.
+		if err := rows.Scan(&sk.ID, &sk.Name, &sk.Description, &sk.Trigger, &stepsStr, &toolsStr, &envVarsStr,
 			&sk.Prompt, &sk.State, &sk.Version, &sk.CreatedBy, &sk.CreatedAt, &sk.UpdatedAt,
-			&sk.UseCount, &sk.PatchCount, &sk.FailCount, &lastUsed, &lastPatched, &sk.SourceSession, &sk.UserID)
+			&sk.UseCount, &sk.PatchCount, &sk.FailCount, &lastUsed, &lastPatched, &sk.SourceSession, &sk.UserID); err != nil {
+			log.Printf("runtime_skill: scan error: %v", err)
+			continue
+		}
 		json.Unmarshal([]byte(stepsStr), &sk.Steps)
 		json.Unmarshal([]byte(toolsStr), &sk.Tools)
 		json.Unmarshal([]byte(envVarsStr), &sk.EnvVars)
