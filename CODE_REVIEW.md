@@ -37,7 +37,7 @@
 llm:
   provider: xiaomi
   model: mimo-v5-pro
-  api_key: tp-c4ds6kas5223hrfg0q64ao5m1hkr8q6886e7fpaevjlbr8cw
+  api_key: tp-c4ds6…cjbr8cw          # 已脱敏，完整值请见 git 历史
   base_url: https://token-plan-cn.xiaomimimo.com/v1
 ```
 
