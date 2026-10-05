@@ -6,6 +6,22 @@ uploads/
 .env
 *.db
 .hermes-chat/
+.crux-chat/
+.hermes/
 *.log
+
+# Compiled Go binaries — build with `go build`, never commit the artifact
 backend/backend
+backend/crux-chat
 backend/hermes-chat
+hermes-chat-backend
+crux-agent-go/hermes
+*.tar.gz
+
+# Contains a real API key — use crux-agent-go/config.yaml.example instead
+crux-agent-go/config.yaml
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/

@@ -34,16 +34,34 @@
 ## 快速启动
 
 ```bash
-export OPENAI_API_KEY=sk-xxx
+# 1. 配置环境变量（JWT_SECRET 是必填项，缺失时后端拒绝启动）
+cp .env.example .env
+echo "JWT_SECRET=$(openssl rand -hex 32)" >> .env
+# 在 .env 中填入 OPENAI_API_KEY
 
-# 启动后端
+# 2. 启动（自动构建后端 + 启动前端）
+./start.sh
+```
+
+或者手动分两步启动：
+
+```bash
+# 后端（:8080）
 cd backend && go run .
 
-# 启动前端
+# 前端（:3000）
 cd frontend && npm install && npm run dev
 ```
 
 打开 http://localhost:3000
+
+> **注意**：后端默认监听 `LISTEN_ADDR`（默认 `:8080`），不是 `PORT`。
+> 生产部署建议设置 `CORS_ORIGINS=http://your-frontend-domain`（留空表示允许所有来源，仅适合本地开发）。
+>
+> **鉴权**：除 `/api/health`、`/api/auth/register`、`/api/auth/login` 外，所有接口都需要
+> `Authorization: Bearer <token>`。**数据库中第一个注册的用户会自动成为 admin**，
+> 之后注册需要邀请码（可在 Settings 页面获取自己的邀请码）。
+
 
 ## Agent 配置
 
@@ -91,8 +109,11 @@ cd frontend && npm install && npm run dev
 
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
-| `OPENAI_API_KEY` | (必填) | API Key |
+| `JWT_SECRET` | **(必填)** | JWT 签名密钥。未配置时后端 **拒绝启动**。`openssl rand -hex 32` 生成 |
+| `OPENAI_API_KEY` | — | API Key（也可在 Settings 页面按用户配置 Provider） |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | API 地址 |
 | `OPENAI_MODEL` | `gpt-4o` | 默认模型 |
-| `LISTEN_ADDR` | `:8080` | 后端端口 |
+| `LISTEN_ADDR` | `:8080` | 后端监听地址（**不是 PORT**） |
 | `UPLOAD_DIR` | `./uploads` | 上传目录 |
+| `CORS_ORIGINS` | (空=允许全部) | 逗号分隔的允许来源，生产环境建议显式设置 |
+

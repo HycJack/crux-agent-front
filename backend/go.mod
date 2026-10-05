@@ -43,4 +43,6 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
-replace github.com/hermes-go => /root/hermes-go
+// The agent framework source lives in this repo at ../crux-agent-go.
+// Do not use an absolute path here — it only resolves on the original author's machine.
+replace github.com/hermes-go => ../crux-agent-go
