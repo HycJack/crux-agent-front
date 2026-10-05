@@ -584,26 +584,29 @@ func (e *SkillEngine) CleanupStaleSkills() {
 // ════════════════════════════════════════════════
 
 func (e *ChatEngine) ListRuntimeSkills(c *gin.Context) {
+	userID := c.GetString("userID")
 	state := c.Query("state")
 	tool := c.Query("tool")
 	query := c.Query("q")
 
+	// Always scope to the caller — these skills embed prompts, steps and
+	// env var names belonging to a specific user.
 	var skills []*RuntimeSkill
 	if query != "" {
-		skills = e.runtimeSkillEngine.store.Search(query)
+		skills = e.runtimeSkillEngine.store.SearchForUser(query, userID)
 	} else if tool != "" {
-		skills = e.runtimeSkillEngine.store.ListByTool(tool)
+		skills = e.runtimeSkillEngine.store.ListByToolForUser(tool, userID)
 	} else if state != "" {
-		skills = e.runtimeSkillEngine.store.ListByState(state)
+		skills = e.runtimeSkillEngine.store.ListByStateForUser(state, userID)
 	} else {
-		skills = e.runtimeSkillEngine.store.List()
+		skills = e.runtimeSkillEngine.store.ListByUser(userID)
 	}
 	c.JSON(200, gin.H{"skills": skills})
 }
 
 func (e *ChatEngine) GetRuntimeSkill(c *gin.Context) {
 	id := c.Param("id")
-	skill := e.runtimeSkillEngine.store.Get(id)
+	skill := e.runtimeSkillEngine.store.GetForUser(id, c.GetString("userID"))
 	if skill == nil {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -613,7 +616,7 @@ func (e *ChatEngine) GetRuntimeSkill(c *gin.Context) {
 
 func (e *ChatEngine) UpdateRuntimeSkill(c *gin.Context) {
 	id := c.Param("id")
-	existing := e.runtimeSkillEngine.store.Get(id)
+	existing := e.runtimeSkillEngine.store.GetForUser(id, c.GetString("userID"))
 	if existing == nil {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -624,6 +627,9 @@ func (e *ChatEngine) UpdateRuntimeSkill(c *gin.Context) {
 		return
 	}
 	sk.ID = id
+	// Preserve owner/telemetry fields the client does not send.
+	sk.UserID = existing.UserID
+	sk.CreatedAt = existing.CreatedAt
 	if err := e.runtimeSkillEngine.store.Update(&sk); err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -633,6 +639,12 @@ func (e *ChatEngine) UpdateRuntimeSkill(c *gin.Context) {
 
 func (e *ChatEngine) DeleteRuntimeSkill(c *gin.Context) {
 	id := c.Param("id")
+	// Ownership check: GetForUser returns nil for another tenant's skill, so
+	// this 404s instead of deleting it.
+	if e.runtimeSkillEngine.store.GetForUser(id, c.GetString("userID")) == nil {
+		c.JSON(404, gin.H{"error": "not found"})
+		return
+	}
 	if err := e.runtimeSkillEngine.store.Delete(id); err != nil {
 		c.JSON(404, gin.H{"error": err.Error()})
 		return
@@ -642,7 +654,7 @@ func (e *ChatEngine) DeleteRuntimeSkill(c *gin.Context) {
 
 func (e *ChatEngine) PinRuntimeSkill(c *gin.Context) {
 	id := c.Param("id")
-	skill := e.runtimeSkillEngine.store.Get(id)
+	skill := e.runtimeSkillEngine.store.GetForUser(id, c.GetString("userID"))
 	if skill == nil {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -655,7 +667,7 @@ func (e *ChatEngine) PinRuntimeSkill(c *gin.Context) {
 
 func (e *ChatEngine) ArchiveRuntimeSkill(c *gin.Context) {
 	id := c.Param("id")
-	skill := e.runtimeSkillEngine.store.Get(id)
+	skill := e.runtimeSkillEngine.store.GetForUser(id, c.GetString("userID"))
 	if skill == nil {
 		c.JSON(404, gin.H{"error": "not found"})
 		return
@@ -667,7 +679,8 @@ func (e *ChatEngine) ArchiveRuntimeSkill(c *gin.Context) {
 }
 
 func (e *ChatEngine) SkillStats(c *gin.Context) {
-	skills := e.runtimeSkillEngine.store.List()
+	// Scope to the caller so counts don't disclose other tenants' activity.
+	skills := e.runtimeSkillEngine.store.ListByUser(c.GetString("userID"))
 	stats := map[string]interface{}{
 		"total":     len(skills),
 		"active":    0,

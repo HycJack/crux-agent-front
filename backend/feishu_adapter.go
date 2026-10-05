@@ -119,17 +119,6 @@ func (a *FeishuAdapter) HandleWebhook(c *gin.Context) {
 		return
 	}
 
-	// Verify token if configured
-	if a.verificationToken != "" {
-		var raw map[string]any
-		if json.Unmarshal(body, &raw) == nil {
-			if tok, ok := raw["token"].(string); ok && tok != a.verificationToken {
-				c.JSON(403, gin.H{"error": "invalid verification token"})
-				return
-			}
-		}
-	}
-
 	var event struct {
 		Type  string `json:"type"`
 		Token string `json:"token"`
@@ -165,6 +154,28 @@ func (a *FeishuAdapter) HandleWebhook(c *gin.Context) {
 	// URL verification
 	if event.Type == "url_verification" {
 		c.JSON(200, gin.H{"challenge": event.Token})
+		return
+	}
+
+	// ── Authentication gate ──────────────────────────────────────────────
+	// This endpoint is public and reaches the agent loop, which may hold shell
+	// tools. It must fail closed.
+	//
+	// The previous check only rejected when a token was present AND mismatched,
+	// so omitting the "token" field entirely bypassed verification completely.
+	// Verify before dispatching any event.
+	if a.verificationToken == "" {
+		log.Printf("SECURITY: rejecting Feishu webhook — no verification_token configured. " +
+			"Set it in the gateway config, otherwise this public endpoint can drive the agent unauthenticated.")
+		c.JSON(503, gin.H{"error": "webhook verification not configured"})
+		return
+	}
+	if event.Token == "" {
+		c.JSON(403, gin.H{"error": "missing verification token"})
+		return
+	}
+	if event.Token != a.verificationToken {
+		c.JSON(403, gin.H{"error": "invalid verification token"})
 		return
 	}
 
